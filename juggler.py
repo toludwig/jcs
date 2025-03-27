@@ -3,20 +3,27 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
 """
+A simplified juggling simulation for vanilla site-swaps.
+There are four degrees of freedom at the elbows and hands.
+Two angular forces can "turn" the elbow,
+and two discrete controls can open and close the hands.
+
+Reward is calculated as the inverse distance of the thrown ball to the catching hand.
+
 NOTE left and right are as seen from the front, not from the juggler's perspective
 """
 
 class Juggler():
     DT = 0.01 # time between frames
-    GRAVITY = -10
-    BALL_SPEED = 12 # TODO remove this, should be as quick as the hand?
-    ELBOW_SPEED = 10 # TODO rename?
+    GRAVITY = -2
+    BALL_SPEED = 5 # TODO remove this, should be as quick as the hand?
+    ELBOW_SPEED = 3.8 # TODO rename?
     SHOULDER_RANGE = np.radians(5) # maximal degrees
     SHOULDER_L_POS = np.array([0, 2])
     SHOULDER_R_POS = np.array([2, 2])
     UPPERARM_LENGTH = 1.5
     LOWERARM_LENGTH = 0.5
-    CATCH_TOLERANCE = 0.2 # TODO ball diameter
+    CATCH_TOLERANCE = 0.5
 
     def __init__(self, pattern, rendering=True):
         # body state (4 degrees of freedom)
@@ -50,6 +57,13 @@ class Juggler():
         body = (self.hold_l, self.hold_r, self.elbow_l, self.elbow_r, self.d_elbow_l, self.d_elbow_r)
         return body, self.balls
 
+    def get_reward(self):
+        # dist = 0
+        # for ball in self.balls:
+        #     if ball["dwell"] < 0 and ball["vel"][1] < 0: # distance only when flying down
+        #         dist += ball["pos"] - [self.hand_l_pos, self.hand_r_pos][ball["target"]]
+        # return 1 / dist
+        return 1 # time without drop
 
     def step(self, disc_controls, cont_controls):
         """
@@ -82,7 +96,7 @@ class Juggler():
 
         # observations
         state = self.get_state()
-        # TODO return self.catches
+        # TODO also return reward here
         return state, drop
 
 
@@ -130,6 +144,7 @@ class Juggler():
     def _throw_ball(self, ball):
         """
         Release ball from hand.
+        Every throw increases beat.
         """
         ball["height"] = self.pattern[self.beat % self.period]
         ball["origin"] = ball["dwell"]
@@ -142,10 +157,6 @@ class Juggler():
         print("origin", ball["origin"])
 
         self.beat += 1 # TODO after take_ball?
-        # add balls if needed
-        # TODO do so at the right time
-        if len(self.balls) < self.n_balls:
-            self._take_ball()
 
 
     def _fly_ball(self, ball):
@@ -165,11 +176,13 @@ class Juggler():
         hold = [self.hold_l, self.hold_r][target]
         if not hold:
             return
+        print("beat", self.beat, "  ball beat", ball["beat"])
         beats = self.beat - ball["beat"] # beats between
-        if beats != ball["height"] - 2:
+        if beats != ball["height"]:
             return
         target_pos = [self.hand_l_pos, self.hand_r_pos][target]
         dist = np.linalg.norm(ball["pos"] - target_pos)
+        print(dist)
         if dist < Juggler.CATCH_TOLERANCE:
             ball["dwell"] = target
             self.beat += 1
@@ -289,7 +302,7 @@ class OptimalAgent():
 
 
     def control(self, state):
-        (body, balls) = state
+        (body, balls) = state # TODO use balls
         _, _, elbow_l, elbow_r, d_elbow_l, d_elbow_r = body
 
         # current beat
@@ -302,11 +315,22 @@ class OptimalAgent():
         theta = OptimalAgent.height2theta[height]
         omega = OptimalAgent.height2omega[height]
 
-        # adapt speed for next throw
-        if throw_hand == 0:
-            dd_elbow_l = omega - d_elbow_l
-        else:
-            dd_elbow_r = omega - d_elbow_r
+        # adapt speed
+        # if elbow_l < theta: # accelerate
+        #     dd_elbow_l = omega - d_elbow_l
+        # elif elbow_l < 3/2*np.pi: # decelerate
+        #     dd_elbow_l = 2 - d_elbow_l
+        # else:
+        #     dd_elbow_l = 0
+        # if elbow_r < theta: # accelerate
+        #     dd_elbow_r = omega - d_elbow_r
+        # elif elbow_r < 3/2*np.pi: # decelerate
+        #     dd_elbow_r = 2 - d_elbow_r
+        # else:
+        #     dd_elbow_r = 0
+
+        dd_elbow_l = 0
+        dd_elbow_r = 0
 
         # TODO adapt speed of catching hand
         if throw_hand == 0: # catch_hand == 1
@@ -328,7 +352,7 @@ class OptimalAgent():
 
         disc_controls = (hold_l, hold_r)
         cont_controls = (dd_elbow_l, dd_elbow_r)
-        return cont_controls, disc_controls
+        return disc_controls, cont_controls
 
 
 
@@ -347,4 +371,4 @@ if __name__ == "__main__":
         ctrl = agent.control(state)
         step += 1
 
-    env.render() #str(PATTERN) + "uniform_speed.gif")
+    env.render() # str(PATTERN) + "uniform_speed.gif")

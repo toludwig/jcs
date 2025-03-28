@@ -25,7 +25,7 @@ class Juggler():
     LOWERARM_LENGTH = 0.5
     CATCH_TOLERANCE = 0.5
 
-    def __init__(self, pattern, rendering=True):
+    def __init__(self, pattern, rendering=True, verbose=True):
         # body state (4 degrees of freedom)
         self.hold_l = True
         self.hold_r = True
@@ -50,7 +50,9 @@ class Juggler():
         # drawing
         self.rendering = rendering
         self.frames = [] # for saving frames
-        self._draw_init()
+        if rendering:
+            self._draw_init()
+        self.verbose = verbose
 
 
     def get_state(self):
@@ -58,12 +60,12 @@ class Juggler():
         return body, self.balls
 
     def get_reward(self):
-        # dist = 0
-        # for ball in self.balls:
-        #     if ball["dwell"] < 0 and ball["vel"][1] < 0: # distance only when flying down
-        #         dist += ball["pos"] - [self.hand_l_pos, self.hand_r_pos][ball["target"]]
-        # return 1 / dist
-        return 1 # time without drop
+        dist = 0
+        for ball in self.balls:
+            if ball["dwell"] == -1 and ball["vel"][1] < 0: # distance only when flying down
+                dist += np.linalg.norm(ball["pos"] - [self.hand_l_pos, self.hand_r_pos][ball["target"]])
+        return 1/dist if dist != 0 else 0
+        #return 1 # time without drop
 
     def step(self, disc_controls, cont_controls):
         """
@@ -90,14 +92,16 @@ class Juggler():
         self._simulate_balls()
         drop = self._check_drop()
 
+        # get_reward
+        reward = self.get_reward()
+
         # rendering
         if self.rendering:
             self._draw()
 
         # observations
         state = self.get_state()
-        # TODO also return reward here
-        return state, drop
+        return state, drop, reward
 
 
     def _update_joints(self):
@@ -151,10 +155,10 @@ class Juggler():
         ball["target"] = ball["origin"] if ball["height"] % 2 == 0 else 1-ball["origin"]
         ball["dwell"] = -1 # in air
         ball["beat"] = self.beat # TODO needed?
-
-        print("id", ball["id"])
-        print("beat", self.beat)
-        print("origin", ball["origin"])
+        if self.verbose:
+            print("id", ball["id"])
+            print("beat", self.beat)
+            print("origin", ball["origin"])
 
         self.beat += 1 # TODO after take_ball?
 
@@ -176,18 +180,21 @@ class Juggler():
         hold = [self.hold_l, self.hold_r][target]
         if not hold:
             return
-        print("beat", self.beat, "  ball beat", ball["beat"])
+        if self.verbose:
+            print("beat", self.beat, "  ball beat", ball["beat"])
         beats = self.beat - ball["beat"] # beats between
         if beats != ball["height"]:
             return
         target_pos = [self.hand_l_pos, self.hand_r_pos][target]
         dist = np.linalg.norm(ball["pos"] - target_pos)
-        print(dist)
+        if self.verbose:
+            print(dist)
         if dist < Juggler.CATCH_TOLERANCE:
             ball["dwell"] = target
             self.beat += 1
             self.catches += 1
-            print("catch!")
+            if self.verbose:
+                print("catch!")
 
 
     def _simulate_balls(self):
@@ -210,8 +217,9 @@ class Juggler():
             if (not self.hold_l and ball["dwell"] == 0) \
             or (not self.hold_r and ball["dwell"] == 1):
                 if bid == self.beat % self.period: # if in order
-                    print("throw ball", bid)
-                    print("initial v:", ball["vel"])
+                    if self.verbose:
+                        print("throw ball", bid)
+                        print("initial v:", ball["vel"])
                     self._throw_ball(ball)
             
             # if ball not in hand, let it fly
@@ -219,8 +227,9 @@ class Juggler():
                 self._fly_ball(ball)
 
                 if bid == 0:
-                    # print(ball["vel"])
-                    print(ball["pos"])
+                    if self.verbose:
+                        # print(ball["vel"])
+                        print(ball["pos"])
 
                 # try and catch ball
                 self._try_catch_ball(ball)
@@ -278,7 +287,7 @@ class OptimalAgent():
     at which angle and with which speed to throw.
     """
     # TODO angle at which to throw
-    height2theta = {1: 0,
+    height2theta = {1: np.pi/6,
                     2: np.nan,
                     3: np.pi/3, # TODO
                     4: 5*np.pi/8,
@@ -365,10 +374,12 @@ if __name__ == "__main__":
 
     ctrl = agent.control(env.get_state())
     drop = False
+    rewards = []
     step = 0
     while not drop and step < N_STEP:
-        state, drop = env.step(*ctrl)
+        state, drop, reward = env.step(*ctrl)
         ctrl = agent.control(state)
+        rewards += [reward]
         step += 1
 
     env.render() # str(PATTERN) + "uniform_speed.gif")

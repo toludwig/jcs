@@ -25,8 +25,19 @@ class Juggler():
     LOWERARM_LENGTH = 0.5
     CATCH_TOLERANCE = 0.5
 
+    state_dim = 20
+    action_dim = 4
+
+
     def __init__(self, pattern, rendering=True, verbose=True):
-        self.pattern = pattern # TODO only used for starting state, maybe reduce to n_balls
+        """
+        Note that pattern defines how the environment behaves,
+        therefore it's shared between environment and agent.
+        """
+        # set pattern / task
+        self.pattern = pattern
+        self.period = len(self.pattern)
+        self.n_balls = sum(self.pattern) // self.period # TODO error if not divisible
 
         # drawing
         self.rendering = rendering
@@ -63,25 +74,27 @@ class Juggler():
         return self._get_observations()
 
 
-    def _get_observations(self):
+    def sample_action(self):
         """
-        The observations are body states and ball states
-        plus the number of throws (beat) and catches.
+        Samples a random action where the first two are discrete (boolean)
+        and the second two are continuous (in range [-1,1]).
         """
-        obs = [self.hold_l, self.hold_r, self.elbow_l, self.elbow_r, self.d_elbow_l, self.d_elbow_r]
-        for ball in self.balls:
-            obs += [ball["pos"][0], ball["pos"][1], ball["vel"][0], ball["vel"][1]]
-        obs += [self.beat, self.catches] # TODO optional
-        return obs
+        disc = np.random.choice([0,1], size=2)        
+        cont = np.random.rand(2) * np.random.choice([-1,1], size=2)
+        return np.hstack([disc, cont])
 
 
-    def get_reward(self):
-        dist = 0
-        for ball in self.balls:
-            if ball["dwell"] == -1 and ball["vel"][1] < 0: # distance only when flying down
-                dist += np.linalg.norm(ball["pos"] - [self.hand_l_pos, self.hand_r_pos][ball["target"]])
-        return 1/dist if dist != 0 else 0
-        #return 1 # time without drop
+    def sample_state(self):
+        """
+        Sample a random state. See _get_observation.
+        """
+        hold = np.random.choice([0,1], size=2)        
+        elbow = np.random.rand(4) * 2*np.pi # 4 dims for 2 pos and 2 vel
+        balls = []
+        for _ in range(self.n_balls):
+            balls += [np.random.rand(4) * 2*np.pi] # 4 dims for 2 pos and 2 vel
+        counters = np.random.randint(0, 10, size=2) # 2 more dims for throw and catch counter
+        return np.hstack([hold, elbow] + balls + [counters]) 
 
 
     def step(self, disc_controls, cont_controls):
@@ -110,7 +123,7 @@ class Juggler():
         drop = self._check_drop()
 
         # get_reward
-        reward = self.get_reward()
+        reward = self._get_reward()
 
         # rendering
         if self.rendering:
@@ -119,6 +132,27 @@ class Juggler():
         # observations
         obs = self._get_observations()
         return obs, reward, drop
+
+
+    def _get_observations(self):
+        """
+        The observations are body states and ball states
+        plus the number of throws (beat) and catches.
+        """
+        obs = [self.hold_l, self.hold_r, self.elbow_l, self.elbow_r, self.d_elbow_l, self.d_elbow_r]
+        for ball in self.balls:
+            obs += [ball["pos"][0], ball["pos"][1], ball["vel"][0], ball["vel"][1]]
+        obs += [self.beat, self.catches] # TODO optional
+        return obs
+
+
+    def _get_reward(self):
+        dist = 0
+        for ball in self.balls:
+            if ball["dwell"] == -1 and ball["vel"][1] < 0: # distance only when flying down
+                dist += np.linalg.norm(ball["pos"] - [self.hand_l_pos, self.hand_r_pos][ball["target"]])
+        return 1/dist if dist != 0 else 0
+        #return 1 # time without drop
 
 
     def _update_joints(self):
@@ -142,10 +176,6 @@ class Juggler():
         Init pattern and balls.
         All balls are placed in the two hands but only the top ball is thrown.
         """
-        # set pattern / task
-        self.period = len(self.pattern)
-        self.n_balls = sum(self.pattern) // self.period # TODO error if not divisible
-
         # init all balls
         for bid in range(self.n_balls):
             origin = bid % 2
@@ -318,7 +348,7 @@ class OptimalAgent():
         self.beat = 0 # TODO
 
 
-    def control(self, observations):
+    def act(self, observations):
         elbow_l, elbow_r, d_elbow_l, d_elbow_r = observations[2:6]
 
         # current beat

@@ -136,7 +136,7 @@ class SAC(nn.Module):
         # self.action_indices = torch.arange(self.action_dims).to(device=self.device)
         # self.action_vectors = torch.eye(self.action_dims).float().to(device=self.device)
 
-    def step(self, state):
+    def control(self, state):
         binary_dist, cont_dist = self.actor(state)
         binary_action = binary_dist.sample()
         cont_action = cont_dist.sample()
@@ -144,7 +144,7 @@ class SAC(nn.Module):
         action = torch.cat([binary_action, cont_action], dim=-1)
         return action
 
-    def step_deterministic(self, state):
+    def control_deterministic(self, state):
         binary_dist, cont_dist = self.actor(state)
         binary_action = binary_dist.mode()
         cont_action = cont_dist.mean()

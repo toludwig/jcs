@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal, Bernoulli, Categorical
+import numpy as np
+
 
 
 def weight_init_(m):
@@ -111,30 +113,31 @@ class Critic(nn.Module):
 
 
 class SAC(nn.Module):
-    def __init__(self, state_dims, action_dims, hidden_dims=256, gamma=0.99, alpha=0.1, rho=0.01):
+    def __init__(self, state_dims, binary_actions=2, continuous_actions=2, hidden_dims=256, gamma=0.99, alpha=0.1, rho=0.01):
         super(SAC, self).__init__()
         self.state_dims = state_dims
-        self.action_dims = action_dims
+        self.action_dims = binary_actions + continuous_actions
         self.gamma = gamma
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.actor = MixedPolicyActor(state_dims, action_dims, hidden_dims).to(self.device)#nn.Linear(self.state_dims, self.action_dims)
+        self.actor = MixedPolicyActor(self.state_dims, self.action_dims)
 
+        # Q Networks
+        self.q1 = Critic(state_dims, action_dims, hidden_dims).to(self.device)
+        self.q2 = Critic(state_dims, action_dims, hidden_dims).to(self.device)
+
+        # Target Q Networks
         self.q_target1 = Critic(state_dims, action_dims, hidden_dims).to(self.device)
         self.q_target2 = Critic(state_dims, action_dims, hidden_dims).to(self.device)
 
-        self.q1 = Critic(state_dims, action_dims, hidden_dims).to(self.device)
-        self.q2 = Critic(state_dims, action_dims, hidden_dims).to(self.device)
-        self.target_entropy = -self.action_dims
+        # Initialize target networks with the same weights as the main Q-networks
+        self.q_target1.load_state_dict(self.q1.state_dict())
+        self.q_target2.load_state_dict(self.q2.state_dict())
 
-
-        # self.target_models = [self.q_target1, self.q_target2]
-        # self.src_models = [self.qsrc1, self.qsrc2]
+        self.target_entropy = -continuous_actions  +  -0.8 *binary_actions* np.log(2)
 
         self.alpha = torch.nn.Parameter(torch.tensor([alpha], device="cuda" if torch.cuda.is_available() else "cpu").log())
         self.rho = rho
-        # self.action_indices = torch.arange(self.action_dims).to(device=self.device)
-        # self.action_vectors = torch.eye(self.action_dims).float().to(device=self.device)
 
     def step(self, state):
         binary_dist, cont_dist = self.actor(state)
@@ -219,9 +222,17 @@ class SAC(nn.Module):
         alpha_loss = (self.alpha.exp() * (-log_probs - self.target_entropy).detach()).mean()
         # alpha_loss = (-self.alpha.exp() * (log_probs - (-self.target_entropy)).detach()).mean()
         return loss, alpha_loss
-    
 
 
 
+if __name__ == '__main__':
+    state_dims = 3
+    action_dims = 4
+    actor = MixedPolicyActor(state_dims)
+    critic = Critic(state_dims, action_dims)
 
+    policy_d, policy_con = actor(torch.tensor(np.random.randn(1, state_dims)).float())
 
+    print(policy_con.sample(), policy_d.sample())
+
+    print(critic(torch.tensor(np.random.randn(1, state_dims)).float(), torch.tensor(np.random.randn(1, action_dims)).float()))

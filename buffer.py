@@ -11,7 +11,6 @@ class Buffer():
         self.buffer_is_full = False
         self.batch_size = batch_size
         self.names = ['S', 'A', 'S_prime', 'R', 'terminal']
-        self.names_seq = ['S', 'A', 'S_prime', 'R', 'terminal', 'aseq']
         self.num_episodes = 0
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

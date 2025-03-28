@@ -139,7 +139,7 @@ class SAC(nn.Module):
         self.alpha = torch.nn.Parameter(torch.tensor([alpha], device="cuda" if torch.cuda.is_available() else "cpu").log())
         self.rho = rho
 
-    def step(self, state):
+    def act(self, state):
         binary_dist, cont_dist = self.actor(state)
         binary_action = binary_dist.sample()
         cont_action = cont_dist.sample()
@@ -147,7 +147,7 @@ class SAC(nn.Module):
         action = torch.cat([binary_action, cont_action], dim=-1)
         return action
 
-    def step_deterministic(self, state):
+    def act_deterministic(self, state):
         binary_dist, cont_dist = self.actor(state)
         binary_action = binary_dist.mode()
         cont_action = cont_dist.mean()
@@ -189,7 +189,9 @@ class SAC(nn.Module):
         return q_vals
 
 
-    def train_critic(self, s, a, s_prime, r, terminal):
+    def train_critic(self, buffer):
+        s, a, s_prime, r, terminal = buffer.sample()
+        self.s = s
 
         with torch.no_grad():
             # simulate next action using policy
@@ -208,7 +210,8 @@ class SAC(nn.Module):
 
         return loss1 + loss2
 
-    def train_actor(self, s):
+    def train_actor(self):
+        s = self.s
         a, log_probs = self.get_action_probabilities(s)
         q_prime = self.get_q_vals(s, a, target=False)
         loss = ((self.alpha.exp().detach() * log_probs) - q_prime).mean()

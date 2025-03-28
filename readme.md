@@ -20,7 +20,7 @@ The state is as follows:
 * `pos`: ball position (x,y)
 * `vel`: ball velocity (dx, dy)
 * `beat`: beat count at time when ball was thrown
-* `dwell`: whether the ball is in hand
+* `dwell`: 0 for left, 1 for right hand, -1 if the ball is in the air
 * `origin`: whether the ball was thrown from left or right hand
 * `height`: at which height the ball is thrown
 

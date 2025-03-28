@@ -17,7 +17,7 @@ class Juggler():
     DT = 0.01 # time between frames
     GRAVITY = -2
     BALL_SPEED = 5 # TODO remove this, should be as quick as the hand?
-    ELBOW_SPEED = 3.8 # TODO rename?
+    ELBOW_SPEED = 3.5 # TODO rename?
     SHOULDER_RANGE = np.radians(5) # maximal degrees
     SHOULDER_L_POS = np.array([0, 2])
     SHOULDER_R_POS = np.array([2, 2])
@@ -26,6 +26,20 @@ class Juggler():
     CATCH_TOLERANCE = 0.5
 
     def __init__(self, pattern, rendering=True, verbose=True):
+        self.pattern = pattern # TODO only used for starting state, maybe reduce to n_balls
+
+        # drawing
+        self.rendering = rendering
+        self.frames = [] # for saving frames
+        if rendering:
+            self._draw_init()
+        self.verbose = verbose
+
+
+    def reset(self):
+        """
+        Resets the state and returns observations.
+        """
         # body state (4 degrees of freedom)
         self.hold_l = True
         self.hold_r = True
@@ -45,19 +59,21 @@ class Juggler():
         self.beat = 0 # beat is incremented with every catch and throw
         self.catches = 0 # catch counter
         self.balls = []
-        self._init_pattern(pattern) # TODO can we change pattern of juggler after __init__?
-
-        # drawing
-        self.rendering = rendering
-        self.frames = [] # for saving frames
-        if rendering:
-            self._draw_init()
-        self.verbose = verbose
+        self._init_pattern() # TODO can we change pattern of juggler after __init__?
+        return self._get_observations()
 
 
-    def get_state(self):
-        body = (self.hold_l, self.hold_r, self.elbow_l, self.elbow_r, self.d_elbow_l, self.d_elbow_r)
-        return body, self.balls
+    def _get_observations(self):
+        """
+        The observations are body states and ball states
+        plus the number of throws (beat) and catches.
+        """
+        obs = [self.hold_l, self.hold_r, self.elbow_l, self.elbow_r, self.d_elbow_l, self.d_elbow_r]
+        for ball in self.balls:
+            obs += [ball["pos"][0], ball["pos"][1], ball["vel"][0], ball["vel"][1]]
+        obs += [self.beat, self.catches] # TODO optional
+        return obs
+
 
     def get_reward(self):
         dist = 0
@@ -66,6 +82,7 @@ class Juggler():
                 dist += np.linalg.norm(ball["pos"] - [self.hand_l_pos, self.hand_r_pos][ball["target"]])
         return 1/dist if dist != 0 else 0
         #return 1 # time without drop
+
 
     def step(self, disc_controls, cont_controls):
         """
@@ -100,8 +117,8 @@ class Juggler():
             self._draw()
 
         # observations
-        state = self.get_state()
-        return state, drop, reward
+        obs = self._get_observations()
+        return obs, reward, drop
 
 
     def _update_joints(self):
@@ -120,13 +137,12 @@ class Juggler():
         self.hand_r_vel = np.array([-np.cos(self.elbow_r), np.sin(self.elbow_r)]) * Juggler.LOWERARM_LENGTH * Juggler.BALL_SPEED
 
 
-    def _init_pattern(self, pattern):
+    def _init_pattern(self):
         """
         Init pattern and balls.
         All balls are placed in the two hands but only the top ball is thrown.
         """
         # set pattern / task
-        self.pattern = pattern
         self.period = len(self.pattern)
         self.n_balls = sum(self.pattern) // self.period # TODO error if not divisible
 
@@ -159,8 +175,7 @@ class Juggler():
             print("id", ball["id"])
             print("beat", self.beat)
             print("origin", ball["origin"])
-
-        self.beat += 1 # TODO after take_ball?
+        self.beat += 1
 
 
     def _fly_ball(self, ball):
@@ -173,23 +188,21 @@ class Juggler():
         """
         Catch ball if
         1. target hand is in catching state (hold == True)
-        2. number of beats that have passed equals ball height
-        3. ball is within CATCH_TOLERANCE distance of target hand
+        2. ball is within CATCH_TOLERANCE distance of target hand
+        3. number of beats that have passed equals ball height # TODO this is not the case for very long or very short dwell times
         """
         target = ball["target"]
         hold = [self.hold_l, self.hold_r][target]
         if not hold:
             return
+        target_pos = [self.hand_l_pos, self.hand_r_pos][target]
+        dist = np.linalg.norm(ball["pos"] - target_pos)
+        if dist > Juggler.CATCH_TOLERANCE:
+            return
         if self.verbose:
             print("beat", self.beat, "  ball beat", ball["beat"])
         beats = self.beat - ball["beat"] # beats between
-        if beats != ball["height"]:
-            return
-        target_pos = [self.hand_l_pos, self.hand_r_pos][target]
-        dist = np.linalg.norm(ball["pos"] - target_pos)
-        if self.verbose:
-            print(dist)
-        if dist < Juggler.CATCH_TOLERANCE:
+        if beats == ball["height"]:
             ball["dwell"] = target
             self.beat += 1
             self.catches += 1
@@ -216,7 +229,7 @@ class Juggler():
             # when hand with ball opens, throw top ball
             if (not self.hold_l and ball["dwell"] == 0) \
             or (not self.hold_r and ball["dwell"] == 1):
-                if bid == self.beat % self.period: # if in order
+                if bid == self.beat % self.period: # if multiple balls in hand (at start), throw the right one
                     if self.verbose:
                         print("throw ball", bid)
                         print("initial v:", ball["vel"])
@@ -225,11 +238,6 @@ class Juggler():
             # if ball not in hand, let it fly
             if ball["dwell"] < 0:
                 self._fly_ball(ball)
-
-                if bid == 0:
-                    if self.verbose:
-                        # print(ball["vel"])
-                        print(ball["pos"])
 
                 # try and catch ball
                 self._try_catch_ball(ball)
@@ -310,9 +318,8 @@ class OptimalAgent():
         self.beat = 0 # TODO
 
 
-    def control(self, state):
-        (body, balls) = state # TODO use balls
-        _, _, elbow_l, elbow_r, d_elbow_l, d_elbow_r = body
+    def control(self, observations):
+        elbow_l, elbow_r, d_elbow_l, d_elbow_r = observations[2:6]
 
         # current beat
         if elbow_l == 0 or elbow_r == 0: # when arm crosses 0, start new beat
@@ -367,18 +374,18 @@ class OptimalAgent():
 
 if __name__ == "__main__":
     PATTERN = [3,3,3]
-    N_STEP = 350
+    N_STEP = 450
 
     env = Juggler(PATTERN, rendering=True)
     agent = OptimalAgent(PATTERN)
 
-    ctrl = agent.control(env.get_state())
     drop = False
     rewards = []
     step = 0
+    obs = env.reset()
     while not drop and step < N_STEP:
-        state, drop, reward = env.step(*ctrl)
-        ctrl = agent.control(state)
+        ctrl = agent.control(obs)
+        obs, reward, drop = env.step(*ctrl)
         rewards += [reward]
         step += 1
 

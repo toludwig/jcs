@@ -106,6 +106,8 @@ class Critic(nn.Module):
         self.apply(weight_init_)
 
     def forward(self, x, action):
+        print(action)
+        print(x.shape)
         x = torch.cat([x, action], dim=-1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
@@ -120,19 +122,21 @@ class SAC(nn.Module):
         self.gamma = gamma
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.actor = MixedPolicyActor(self.state_dims, self.action_dims)
+        self.actor = MixedPolicyActor(self.state_dims, num_continuous_actions=continuous_actions, num_binary_actions=binary_actions)
 
         # Q Networks
-        self.q1 = Critic(state_dims, action_dims, hidden_dims).to(self.device)
-        self.q2 = Critic(state_dims, action_dims, hidden_dims).to(self.device)
+        self.q1 = Critic(state_dims, self.action_dims, hidden_dims).to(self.device)
+        self.q2 = Critic(state_dims, self.action_dims, hidden_dims).to(self.device)
 
         # Target Q Networks
-        self.q_target1 = Critic(state_dims, action_dims, hidden_dims).to(self.device)
-        self.q_target2 = Critic(state_dims, action_dims, hidden_dims).to(self.device)
+        self.q_target1 = Critic(state_dims, self.action_dims, hidden_dims).to(self.device)
+        self.q_target2 = Critic(state_dims, self.action_dims, hidden_dims).to(self.device)
+        self.src_models = [self.q1, self.q2]
 
         # Initialize target networks with the same weights as the main Q-networks
         self.q_target1.load_state_dict(self.q1.state_dict())
         self.q_target2.load_state_dict(self.q2.state_dict())
+        self.target_models = [self.q_target1, self.q_target2]
 
         self.target_entropy = -continuous_actions  +  -0.8 *binary_actions* np.log(2)
 
@@ -195,7 +199,7 @@ class SAC(nn.Module):
 
         with torch.no_grad():
             # simulate next action using policy
-            action_next, log_probs = self.get_action_probabilities(s_prime)
+            action_next, log_probs = self.get_action_prob(s_prime)
             q_prime = self.get_q_vals(s_prime, action_next, target=True)  # get Q values for next state and action
             q_prime = q_prime - (self.alpha.exp().detach() * log_probs)
             target = r + ((self.gamma * (1 - terminal)) * q_prime)  # compute target
@@ -212,19 +216,27 @@ class SAC(nn.Module):
 
     def train_actor(self):
         s = self.s
-        a, log_probs = self.get_action_probabilities(s)
+        a, log_probs = self.get_action_prob(s)
         q_prime = self.get_q_vals(s, a, target=False)
         loss = ((self.alpha.exp().detach() * log_probs) - q_prime).mean()
 
         return loss
 
-    def train_actor_and_alpha(self, s):
-        a, log_probs = self.get_action_probabilities(s)  # get all action probabilities and log probs
+    def train_actor_and_alpha(self):
+        s = self.s
+        a, log_probs = self.get_action_prob(s)  # get all action probabilities and log probs
         q_prime = self.get_q_vals(s, a, target=False)
         loss = ((self.alpha.exp().detach() * log_probs) - q_prime).mean()
         alpha_loss = (self.alpha.exp() * (-log_probs - self.target_entropy).detach()).mean()
         # alpha_loss = (-self.alpha.exp() * (log_probs - (-self.target_entropy)).detach()).mean()
         return loss, alpha_loss
+
+    def soft_update(self):
+        """Updates the target network in the direction of the local network but by taking a step sizeg"""
+        for (target_model, local_model) in zip(self.target_models, self.src_models):
+
+            for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
+                target_param.data.copy_((self.rho * local_param.data) + ((1.0 - self.rho) * target_param.data))
 
 
 

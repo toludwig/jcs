@@ -24,14 +24,16 @@ class Juggler():
     UPPERARM_LENGTH = 1.5
     LOWERARM_LENGTH = 0.5
     CATCH_TOLERANCE = 0.5
+    BALL_SIZE = 1
 
     state_dim = 20
     action_dim = 4
 
 
-    def __init__(self, pattern, rendering=True, verbose=True):
+    def __init__(self, pattern, rendering=True, verbose=True, max_steps=500):
         """
         Note that pattern defines how the environment behaves,
+        e.g. it is crucial for the reward function (for checking if the right ball is caught),
         therefore it's shared between environment and agent.
         """
         # set pattern / task
@@ -45,6 +47,8 @@ class Juggler():
         if rendering:
             self._draw_init()
         self.verbose = verbose
+        self.max_steps = max_steps
+        self.current_step = 0
 
 
     def reset(self):
@@ -105,6 +109,8 @@ class Juggler():
         Discrete controls are values to which the state is set immediately (not smoothly).
         Returns observations including body and ball positions TODO as well as reward.
         """
+        self.current_step += 1
+
         # update discrete body state
         self.hold_l, self.hold_r = controls[:2]
         cont_controls = controls[2:]
@@ -121,7 +127,7 @@ class Juggler():
         # simulate balls
         self.time += Juggler.DT
         self._simulate_balls()
-        drop = self._check_drop()
+        terminate = self._check_drop() or self._check_collision() or self.current_step > self.max_steps
 
         # get_reward
         reward = self._get_reward()
@@ -132,7 +138,7 @@ class Juggler():
 
         # observations
         obs = self._get_observations()
-        return obs, reward, drop
+        return obs, reward, terminate
 
 
     def _get_observations(self):
@@ -281,6 +287,18 @@ class Juggler():
         return False
 
 
+    def _check_collision(self):
+        """
+        If balls collide in midair, they will drop,
+        so episode should be ended.
+        """
+        for i in range(self.n_balls):
+            for j in range(i+1, self.n_balls):
+                if np.linalg.norm(self.balls[i]["pos"] - self.balls[j]["pos"]) < Juggler.BALL_SIZE / 2:
+                    return True
+        return False
+
+
     def _draw(self):
         body = self._draw_body()
         arms = self._draw_arms()
@@ -309,7 +327,7 @@ class Juggler():
         balls = []
         for i, ball in enumerate(self.balls):
             pos = ball["pos"]
-            balls += self.ax.plot(pos[0], pos[1], "ro", markersize=20, animated=True)
+            balls += self.ax.plot(pos[0], pos[1], "ro", markersize=self.BALL_SIZE*20, animated=True)
         return balls
     
     def render(self, filename=None):
@@ -326,19 +344,25 @@ class OptimalAgent():
     at which angle and with which speed to throw.
     """
     # TODO angle at which to throw
-    height2theta = {1: np.pi/6,
-                    2: np.nan,
-                    3: np.pi/3, # TODO
-                    4: 5*np.pi/8,
-                    5: 3*np.pi/8,
-                    6: 6*np.pi/10}
+    height2theta = {
+        0: 0,
+        1: np.pi/6,
+        2: np.nan,
+        3: np.pi/3, # TODO
+        4: 5*np.pi/8,
+        5: 3*np.pi/8,
+        6: 6*np.pi/10
+    }
     # TODO speed with which to throw
-    height2omega = {1: 1,
-                    2: 0,
-                    3: 3,
-                    4: 4,
-                    5: 5,
-                    6: 6}
+    height2omega = {
+        0: 0,
+        1: 1,
+        2: 0,
+        3: 3,
+        4: 4,
+        5: 5,
+        6: 6
+    }
 
     #THROW_TOLERANCE = 0.2 # radians
 
@@ -397,26 +421,24 @@ class OptimalAgent():
         # TODO keep track of time
         # self.time += self.DT
 
-        disc_controls = (hold_l, hold_r)
-        cont_controls = (dd_elbow_l, dd_elbow_r)
-        return disc_controls, cont_controls
+        return [hold_l, hold_r, dd_elbow_l, dd_elbow_r]
 
 
 
 if __name__ == "__main__":
-    PATTERN = [3,3,3]
+    PATTERN = [0,3,3] # [3,0,0]
     N_STEP = 450
 
     env = Juggler(PATTERN, rendering=True)
     agent = OptimalAgent(PATTERN)
 
-    drop = False
+    terminate = False
     rewards = []
     step = 0
     obs = env.reset()
-    while not drop and step < N_STEP:
-        ctrl = agent.control(obs)
-        obs, reward, drop = env.step(*ctrl)
+    while not terminate and step < N_STEP:
+        ctrl = agent.act(obs)
+        obs, reward, terminate = env.step(ctrl)
         rewards += [reward]
         step += 1
 

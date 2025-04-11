@@ -9,6 +9,9 @@ venv
 .ipynb_checkpoints
 */.ipynb_checkpoints/*
 
+# compiled python
+*/__pycache__/*
+
 # IPython
 profile_default/
 ipython_config.py

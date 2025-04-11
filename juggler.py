@@ -97,7 +97,7 @@ class Juggler():
         return np.hstack([hold, elbow] + balls + [counters]) 
 
 
-    def step(self, disc_controls, cont_controls):
+    def step(self, controls):
         """
         Apply discrete inputs and continuous forces to control body state.
         Continuous controls are accelerations, i.e. they smoothly change the state.
@@ -106,7 +106,8 @@ class Juggler():
         Returns observations including body and ball positions TODO as well as reward.
         """
         # update discrete body state
-        self.hold_l, self.hold_r = disc_controls
+        self.hold_l, self.hold_r = controls[:2]
+        cont_controls = controls[2:]
 
         # update continuous body state (elbow angle / angular velocity)
         self.d_elbow_l += cont_controls[0] * Juggler.DT

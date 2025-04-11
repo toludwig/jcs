@@ -1,3 +1,4 @@
+
 import torch
 import pickle
 from operator import itemgetter
@@ -11,7 +12,6 @@ class Buffer():
         self.buffer_is_full = False
         self.batch_size = batch_size
         self.names = ['S', 'A', 'S_prime', 'R', 'terminal']
-        self.names_seq = ['S', 'A', 'S_prime', 'R', 'terminal', 'aseq']
         self.num_episodes = 0
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -37,6 +37,7 @@ class Buffer():
 
     def sample(self):
         idx = torch.randint(len(self.data['S']), (self.batch_size, ))
+        print([len(self.data[name]) for name in self.names])
         data = (self.data[name][idx].to(self.device) for name in self.names)
         return data
 

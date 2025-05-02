@@ -6,11 +6,28 @@ from torch import nn, optim
 import random
 import numpy as np
 from buffer import Buffer
+import wandb
+
+
+def evaluate(test_env, agent, device,num_episodes=2):
+    all_episode_rewards = []
+    for _ in range(num_episodes):
+        episode_reward = 0
+        state = test_env.reset()
+        done = False
+        while not done:
+            action = agent.act_deterministic(torch.tensor(state).float().to(device)).detach().cpu().numpy()
+            next_state, reward, done = test_env.step(action)
+            episode_reward += reward
+            state = next_state
+        all_episode_rewards.append(episode_reward)
+    wandb.log({"eval_reward": np.mean(all_episode_rewards)})
 
 
 def train_sac(seed, run,args):
     pattern = [3, 3, 3]
     env = Juggler(pattern, rendering=False, verbose=False)
+    test_env = Juggler(pattern, rendering=False, verbose=False)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -29,13 +46,13 @@ def train_sac(seed, run,args):
     random.seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
-    #env, mt1 = get_metaworld_env(args.task_name, seed)
-    episode_length = 350
+    num_episodes = 500
+    episode_length = 500
     buffer = Buffer(episode_length=episode_length, buffer_size=1000000, batch_size = args.batch_size)
     num_random = 1000
 
-
-    for i in range(episode_length):
+    run.log({"target_entropy": agent.target_entropy})
+    for i in range(num_episodes):
         current_state = env.reset()
         current_state = torch.tensor(current_state).to(device)
         episode_s = torch.zeros(episode_length, state_dim)
@@ -44,7 +61,8 @@ def train_sac(seed, run,args):
         episode_r = torch.zeros(episode_length, 1)
         episode_terminal = torch.zeros(episode_length, 1)
         episode_loss = 0
-        epsiode_loss_alpha = 0
+        episode_loss_alpha = 0
+        episode_loss_crit = 0
         for step in range(episode_length):
             episode_s[step] = current_state
             if step < num_random:
@@ -61,9 +79,6 @@ def train_sac(seed, run,args):
             current_state = next_state
             if i >= 4:
                 s, a, s_prime, r, terminal = buffer.sample()
-                print(a)
-                print(s_prime.shape)
-                print(s.shape)
                 critic_loss = agent.train_critic(buffer)
                 optimizer_critics.zero_grad()
                 critic_loss.backward()
@@ -72,7 +87,8 @@ def train_sac(seed, run,args):
                     #    print('hello')
                     actor_loss, alpha_loss = agent.train_actor_and_alpha()
                     episode_loss += actor_loss
-                    epsiode_loss_alpha += alpha_loss
+                    episode_loss_crit += critic_loss
+                    episode_loss_alpha += alpha_loss
 
                     optimizer_actor.zero_grad()
                     actor_loss.backward()
@@ -83,9 +99,17 @@ def train_sac(seed, run,args):
         run.log({"reward": episode_r.sum().item()})
 
         run.log({"actor_loss": episode_loss})
-        run.log({"critic_loss": epsiode_loss_alpha})
+        run.log({"critic_loss": episode_loss_crit})
+        run.log({"alpha_loss": episode_loss_alpha})
+        run.log({"episode": i})
+        run.log({"alpha": agent.log_alpha.exp().item()})
+
         buffer.append(episode_s, episode_a, episode_s_prime, episode_r, episode_terminal)
         buffer.finish_episode()
+        if i % 10 == 0:
+            evaluate(test_env, agent, device)
+
+
 
 
 

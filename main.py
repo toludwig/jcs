@@ -20,7 +20,7 @@ if __name__ == "__main__":
     args.pattern = eval(args.pattern)
 
     print(args.pattern)
-    wandb.login(key='47ce5a0f1ac4744586c8eb6cad968c2f03bf197c')
+    wandb.login()
 
     run = wandb.init(
         project="JSC",

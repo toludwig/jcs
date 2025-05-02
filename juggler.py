@@ -83,9 +83,10 @@ class Juggler():
         Samples a random action where the first two are discrete (boolean)
         and the second two are continuous (in range [-1,1]).
         """
-        disc = np.random.choice([0,1], size=2)        
-        cont = np.random.rand(2) * np.random.choice([-1,1], size=2)
-        return np.hstack([disc, cont])
+        #disc = np.random.choice([0,1], size=2)
+        cont = np.random.rand(2) * np.random.choice([-1,1], size=4) # TODO size=2 for cont
+        #return np.hstack([disc, cont])
+        return cont
 
 
     def sample_state(self):
@@ -112,7 +113,7 @@ class Juggler():
         self.current_step += 1
 
         # update discrete body state
-        self.hold_l, self.hold_r = controls[:2]
+        self.hold_l, self.hold_r = controls[:2] > 0.5
         cont_controls = controls[2:]
 
         # update continuous body state (elbow angle / angular velocity)

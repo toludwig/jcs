@@ -42,6 +42,7 @@ def train_sac(seed, run,args):
 
     optimizer_actor = optim.Adam(list(agent.actor.parameters()),lr=args.lr)
     optimizer_critics = optim.Adam(list(agent.q1.parameters()) + list(agent.q2.parameters()), lr=args.lr)
+    optimizer_alpha = optim.Adam([agent.log_alpha], lr=args.lr)
 
     random.seed(seed)
     torch.manual_seed(seed)
@@ -93,6 +94,10 @@ def train_sac(seed, run,args):
                     optimizer_actor.zero_grad()
                     actor_loss.backward()
                     optimizer_actor.step()
+
+                    optimizer_alpha.zero_grad()
+                    alpha_loss.backward()
+                    optimizer_alpha.step()
 
                     agent.soft_update()
 

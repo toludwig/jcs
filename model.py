@@ -307,7 +307,7 @@ class SAC(nn.Module):
         self.encoder = IdentityEncoder()
 
 
-        self.policy_head = Actor(state_dims, action_dims, hidden_dims).to(self.device)#nn.Linear(self.state_dims, self.action_dims)
+        self.policy_head = Actor(state_dims, action_dims, hidden_dims).to(self.device)
 
         self.qtarget1 = Critic(state_dims, action_dims, hidden_dims).to(self.device)
         self.qtarget2 = Critic(state_dims, action_dims, hidden_dims).to(self.device)
@@ -318,7 +318,7 @@ class SAC(nn.Module):
         self.target_models = [self.qtarget1, self.qtarget2]
         self.src_models = [self.qsrc1, self.qsrc2]
 
-        self.alpha = torch.nn.Parameter(torch.tensor([alpha], device="cuda" if torch.cuda.is_available() else "cpu").log())
+        self.log_alpha = torch.nn.Parameter(torch.tensor([alpha], device="cuda" if torch.cuda.is_available() else "cpu").log())
         self.rho = rho
         self.action_indices = torch.arange(self.action_dims).to(device=self.device)
         self.action_vectors = torch.eye(self.action_dims).float().to(device=self.device)
@@ -386,7 +386,7 @@ class SAC(nn.Module):
 
             action_probs, log_probs = self.get_action_probabilities(s_prime) # get all action probabilities and log probs
             q_prime = self.get_q_vals(s_prime, target = True)    # get all Q values
-            q_prime = action_probs * (q_prime - self.alpha.exp().detach() * log_probs)   # compute expectation by weighing according to p
+            q_prime = action_probs * (q_prime - self.log_alpha.exp().detach() * log_probs)   # compute expectation by weighing according to p
             q_prime = q_prime.sum(dim=1).unsqueeze(-1)  # integrate
             target = r + ((self.gamma*(1-terminal))*q_prime)
 
@@ -402,11 +402,11 @@ class SAC(nn.Module):
         return loss1 + loss2
 
 
-    def train_actor(self):
+    def train_actor_and_alpha(self):
         s = self.encoder(self.s)
         action_probs, log_probs = self.get_action_probabilities(s) # get all action probabilities and log probs
         q_prime = self.get_q_vals(s, target = False)
-        inside_term = self.alpha.exp().detach()*log_probs - q_prime
+        inside_term = self.log_alpha.exp().detach()*log_probs - q_prime
         loss = (action_probs*inside_term).sum(dim=1).mean()
 
         return loss
@@ -487,7 +487,7 @@ class SACContinuous(SAC):
             # simulate next action using policy
             action_next, log_probs, _ = self.get_action_probabilities(s_prime)
             q_prime = self.get_q_vals(s_prime, action_next, target = True)    # get Q values for next state and action
-            q_prime = q_prime - (self.alpha.exp().detach()*log_probs)
+            q_prime = q_prime - (self.log_alpha.exp().detach()*log_probs)
             target = r + ((self.gamma*(1-terminal))*q_prime) # compute target
 
 
@@ -502,12 +502,12 @@ class SACContinuous(SAC):
         return loss1 + loss2
 
 
-    def train_actor(self):
+    def train_actor_and_alpha(self):
         s = self.encoder(self.s)
         a, log_probs, _ = self.get_action_probabilities(s) # get all action probabilities and log probs
         q_prime = self.get_q_vals(s, a, target = False)
-        loss = ((self.alpha.exp().detach() * log_probs) - q_prime).mean()
-        alpha_loss = (self.alpha.exp() * (-log_probs - self.target_entropy).detach()).mean()
+        loss = ((self.log_alpha.exp().detach() * log_probs) - q_prime).mean()
+        alpha_loss = (self.log_alpha.exp() * (-log_probs - self.target_entropy).detach()).mean()
         return loss, alpha_loss
 
 

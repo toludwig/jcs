@@ -84,9 +84,9 @@ class Juggler():
         and the second two are continuous (in range [-1,1]).
         """
         #disc = np.random.choice([0,1], size=2)
-        cont = np.random.rand(2) * np.random.choice([-1,1], size=4) # TODO size=2 for cont
+        #cont = np.random.rand(2) * np.random.choice([-1,1], size=2)
         #return np.hstack([disc, cont])
-        return cont
+        return np.random.rand(4) * np.random.choice([-1,1], size=4)
 
 
     def sample_state(self):

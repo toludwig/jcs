@@ -1,7 +1,7 @@
 import torch
 
 from juggler import Juggler
-from model import SAC
+from model import SAC, SACContinuous
 from torch import nn, optim
 import random
 import numpy as np
@@ -37,11 +37,10 @@ def train_sac(seed, run,args):
     action_dim = binary_action_dim + cont_action_dim
     state_dim = env.state_dim
 
-    agent = SAC(state_dims=state_dim, binary_actions=binary_action_dim,
-                continuous_actions=cont_action_dim, hidden_dims=args.hidden_dims, gamma=0.99, alpha=args.alpha, rho=args.rho).to(device)
+    agent = SACContinuous(state_dims=state_dim, action_dims=action_dim, hidden_dims=args.hidden_dims, gamma=0.99, alpha=args.alpha, rho=args.rho).to(device)
 
-    optimizer_actor = optim.Adam(list(agent.actor.parameters()),lr=args.lr)
-    optimizer_critics = optim.Adam(list(agent.q1.parameters()) + list(agent.q2.parameters()), lr=args.lr)
+    optimizer_actor = optim.Adam(list(agent.policy_head.parameters()),lr=args.lr)
+    optimizer_critics = optim.Adam(list(agent.qtarget1.parameters()) + list(agent.qtarget2.parameters()), lr=args.lr)
 
     random.seed(seed)
     torch.manual_seed(seed)

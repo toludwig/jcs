@@ -37,7 +37,6 @@ class Buffer():
 
     def sample(self):
         idx = torch.randint(len(self.data['S']), (self.batch_size, ))
-        print([len(self.data[name]) for name in self.names])
         data = (self.data[name][idx].to(self.device) for name in self.names)
         return data
 

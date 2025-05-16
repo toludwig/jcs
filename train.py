@@ -9,7 +9,7 @@ from buffer import Buffer
 import wandb
 
 
-def evaluate(test_env, agent, device,num_episodes=2):
+def evaluate(test_env, agent, device, num_episodes=2):
     all_episode_rewards = []
     for _ in range(num_episodes):
         episode_reward = 0
@@ -46,12 +46,11 @@ def train_sac(seed, run,args):
     random.seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
-    num_episodes = 500
-    episode_length = 500
+    num_episodes = 50
+    episode_length = 1500
     buffer = Buffer(episode_length=episode_length, buffer_size=1000000, batch_size = args.batch_size)
-    num_random = 1000
+    num_random = 100 # how many steps to take random actions
 
-    run.log({"target_entropy": agent.target_entropy})
     for i in range(num_episodes):
         current_state = env.reset()
         current_state = torch.tensor(current_state).to(device)
@@ -68,7 +67,7 @@ def train_sac(seed, run,args):
             if step < num_random:
                 action = env.sample_action()
             else:
-                action = agent.act(current_state.float().to(device)).detach().cpu().numpy()[0]
+                action = agent.act(current_state.float().to(device)).detach().cpu().numpy()
 
             next_state, reward, drop = env.step(action)
             next_state = torch.tensor(next_state, device=device)
@@ -77,14 +76,13 @@ def train_sac(seed, run,args):
             episode_s_prime[step] = next_state
             episode_terminal[step] = drop
             current_state = next_state
-            if i >= 4:
+            if i >= 4: # warmup
                 s, a, s_prime, r, terminal = buffer.sample()
                 critic_loss = agent.train_critic(buffer)
                 optimizer_critics.zero_grad()
                 critic_loss.backward()
                 optimizer_critics.step()
                 if step % 2 == 0:
-                    #    print('hello')
                     actor_loss, alpha_loss = agent.train_actor_and_alpha()
                     episode_loss += actor_loss
                     episode_loss_crit += critic_loss
@@ -94,32 +92,21 @@ def train_sac(seed, run,args):
                     actor_loss.backward()
                     optimizer_actor.step()
 
-                    optimizer_alpha.zero_grad()
-                    alpha_loss.backward()
-                    optimizer_alpha.step()
+                    # optimizer_alpha.zero_grad()
+                    # alpha_loss.backward()
+                    # optimizer_alpha.step()
 
                     agent.soft_update()
 
-        run.log({"reward": episode_r.sum().item()})
-
+        run.log({"total_reward": episode_r.sum().item()})
+        run.log({"episode_reward": episode_r})
         run.log({"actor_loss": episode_loss})
         run.log({"critic_loss": episode_loss_crit})
         run.log({"alpha_loss": episode_loss_alpha})
-        run.log({"episode": i})
+        #run.log({"episode": i})
         run.log({"alpha": agent.log_alpha.exp().item()})
 
         buffer.append(episode_s, episode_a, episode_s_prime, episode_r, episode_terminal)
         buffer.finish_episode()
         if i % 10 == 0:
             evaluate(test_env, agent, device)
-
-
-
-
-
-
-
-
-
-
-

@@ -26,7 +26,7 @@ class Juggler():
     CATCH_TOLERANCE = 0.5
     BALL_SIZE = 1
 
-    state_dim = 20
+    state_dim = 20 # (hold + elbow angle + elbow velocity) * 2 sides + (2 coordinates + 2 velocities) * number_of_balls + beat + catches
     action_dim = 4
 
 
@@ -84,9 +84,9 @@ class Juggler():
         and the second two are continuous (in range [-1,1]).
         """
         #disc = np.random.choice([0,1], size=2)
-        #cont = np.random.rand(2) * np.random.choice([-1,1], size=2)
+        #cont = np.random.rand(2) * 2 - 1
         #return np.hstack([disc, cont])
-        return np.random.rand(4) * np.random.choice([-1,1], size=4)
+        return np.random.rand(4) * 2 - 1
 
 
     def sample_state(self):
@@ -113,7 +113,7 @@ class Juggler():
         self.current_step += 1
 
         # update discrete body state
-        self.hold_l, self.hold_r = controls[:2] > 0.5
+        self.hold_l, self.hold_r = controls[:2] > 0 # TODO for continuous hold controls: 0 or negative means open, positive closed
         cont_controls = controls[2:]
 
         # update continuous body state (elbow angle / angular velocity)
@@ -128,7 +128,7 @@ class Juggler():
         # simulate balls
         self.time += Juggler.DT
         self._simulate_balls()
-        terminate = self._check_drop() or self._check_collision() or self.current_step > self.max_steps
+        terminate = self._check_drop() # or self._check_collision() or self.current_step > self.max_steps
 
         # get_reward
         reward = self._get_reward()
@@ -155,12 +155,21 @@ class Juggler():
 
 
     def _get_reward(self):
+        # reward for turning in the right direction
+        turning_reward = ((self.d_elbow_l > 0) + (self.d_elbow_r > 0)) * 0.01 # TODO
+        # reward for throwing on the inside
+        open_reward = ((self.elbow_l < np.pi and not self.hold_l) +
+                       (self.elbow_r < np.pi and not self.hold_r)) * 0.1 # TODO
+        # reward for catching on the outside
+        close_reward = ((self.elbow_l > np.pi and self.hold_l) +
+                        (self.elbow_r > np.pi and self.hold_r)) * 0.1 # TODO
+        # reward for flight
         dist = 0
         for ball in self.balls:
             if ball["dwell"] == -1 and ball["vel"][1] < 0: # distance only when flying down
                 dist += np.linalg.norm(ball["pos"] - [self.hand_l_pos, self.hand_r_pos][ball["target"]])
-        return 1/dist if dist != 0 else 0
-        #return 1 # time without drop
+        fly_reward = 1/dist if dist != 0 else 0
+        return turning_reward + open_reward + close_reward + fly_reward
 
 
     def _update_joints(self):
@@ -237,8 +246,6 @@ class Juggler():
         dist = np.linalg.norm(ball["pos"] - target_pos)
         if dist > Juggler.CATCH_TOLERANCE:
             return
-        if self.verbose:
-            print("beat", self.beat, "  ball beat", ball["beat"])
         beats = self.beat - ball["beat"] # beats between
         if beats == ball["height"]:
             ball["dwell"] = target
@@ -291,12 +298,13 @@ class Juggler():
     def _check_collision(self):
         """
         If balls collide in midair, they will drop,
-        so episode should be ended.
+        so episode should end.
         """
         for i in range(self.n_balls):
             for j in range(i+1, self.n_balls):
-                if np.linalg.norm(self.balls[i]["pos"] - self.balls[j]["pos"]) < Juggler.BALL_SIZE / 2:
-                    return True
+                if self.balls[i]["dwell"] == -1 and self.balls[j]["dwell"] == -1: # both balls flying
+                    if np.linalg.norm(self.balls[i]["pos"] - self.balls[j]["pos"]) < Juggler.BALL_SIZE / 2:
+                        return True
         return False
 
 
@@ -401,6 +409,7 @@ class OptimalAgent():
         # else:
         #     dd_elbow_r = 0
 
+        # constant velocity
         dd_elbow_l = 0
         dd_elbow_r = 0
 
@@ -416,19 +425,21 @@ class OptimalAgent():
 
         # open hands for throw on the inside depending on throw angle
         # and close hand for catch on the outside (can catch with hand closed)
-        hold_l = elbow_l < theta or np.pi/2 < elbow_l
-        hold_r = elbow_r < theta or np.pi/2 < elbow_r
+        hold_l = True
+        hold_r = True
+        # hold_l = elbow_l < theta or np.pi*2/3 < elbow_l
+        # hold_r = elbow_r < theta or np.pi*2/3 < elbow_r
 
         # TODO keep track of time
         # self.time += self.DT
 
-        return [hold_l, hold_r, dd_elbow_l, dd_elbow_r]
+        return np.array([hold_l, hold_r, dd_elbow_l, dd_elbow_r])
 
 
 
 if __name__ == "__main__":
-    PATTERN = [0,3,3] # [3,0,0]
-    N_STEP = 450
+    PATTERN = [3,3,3] # [3,0,0]
+    N_STEP = 1000
 
     env = Juggler(PATTERN, rendering=True)
     agent = OptimalAgent(PATTERN)
@@ -441,6 +452,7 @@ if __name__ == "__main__":
         ctrl = agent.act(obs)
         obs, reward, terminate = env.step(ctrl)
         rewards += [reward]
+        print(reward)
         step += 1
 
     env.render() # str(PATTERN) + "uniform_speed.gif")

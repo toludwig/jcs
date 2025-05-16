@@ -408,8 +408,9 @@ class SAC(nn.Module):
         q_prime = self.get_q_vals(s, target = False)
         inside_term = self.log_alpha.exp().detach()*log_probs - q_prime
         loss = (action_probs*inside_term).sum(dim=1).mean()
-
+        
         return loss
+
 
     def soft_update(self):
         """Updates the target network in the direction of the local network but by taking a step size

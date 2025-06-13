@@ -9,11 +9,11 @@ from buffer import Buffer
 import wandb
 
 
-def evaluate(test_env, agent, device, num_episodes=2):
+def evaluate(test_env, agent, device, train_episode, num_episodes=1):
     all_episode_rewards = []
-    for _ in range(num_episodes):
+    for i in range(num_episodes):
         episode_reward = 0
-        state = test_env.reset()
+        state = test_env.reset(rendering=True)
         done = False
         while not done:
             action = agent.act_deterministic(torch.tensor(state).float().to(device)).detach().cpu().numpy()
@@ -21,13 +21,17 @@ def evaluate(test_env, agent, device, num_episodes=2):
             episode_reward += reward
             state = next_state
         all_episode_rewards.append(episode_reward)
-    wandb.log({"eval_reward": np.mean(all_episode_rewards)})
+
+    print(train_episode)
+    test_env.render("./render/episode_" + str(train_episode))
+    wandb.log({"example": wandb.Video("./render/episode_" + str(train_episode) + ".gif", format="gif"),
+               "eval_reward": np.mean(all_episode_rewards)
+               })
 
 
 def train_sac(seed, run,args):
-    pattern = [3, 3, 3]
-    env = Juggler(pattern, rendering=False, verbose=False)
-    test_env = Juggler(pattern, rendering=False, verbose=False)
+    env = Juggler(args.pattern, verbose=False)
+    test_env = Juggler(args.pattern, verbose=False)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -46,7 +50,7 @@ def train_sac(seed, run,args):
     random.seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
-    num_episodes = 50
+    num_episodes = 500
     episode_length = 1500
     buffer = Buffer(episode_length=episode_length, buffer_size=1000000, batch_size = args.batch_size)
     num_random = 100 # how many steps to take random actions
@@ -92,9 +96,9 @@ def train_sac(seed, run,args):
                     actor_loss.backward()
                     optimizer_actor.step()
 
-                    # optimizer_alpha.zero_grad()
-                    # alpha_loss.backward()
-                    # optimizer_alpha.step()
+                    optimizer_alpha.zero_grad()
+                    alpha_loss.backward()
+                    optimizer_alpha.step()
 
                     agent.soft_update()
 
@@ -108,5 +112,5 @@ def train_sac(seed, run,args):
 
         buffer.append(episode_s, episode_a, episode_s_prime, episode_r, episode_terminal)
         buffer.finish_episode()
-        if i % 10 == 0:
-            evaluate(test_env, agent, device)
+        if i % 25 == 0:
+            evaluate(test_env, agent, device, i)

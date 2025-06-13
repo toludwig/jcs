@@ -26,11 +26,8 @@ class Juggler():
     CATCH_TOLERANCE = 0.5
     BALL_SIZE = 1
 
-    state_dim = 20 # (hold + elbow angle + elbow velocity) * 2 sides + (2 coordinates + 2 velocities) * number_of_balls + beat + catches
-    action_dim = 4
 
-
-    def __init__(self, pattern, rendering=True, verbose=True, max_steps=500):
+    def __init__(self, pattern, verbose=True, max_steps=500):
         """
         Note that pattern defines how the environment behaves,
         e.g. it is crucial for the reward function (for checking if the right ball is caught),
@@ -41,20 +38,23 @@ class Juggler():
         self.period = len(self.pattern)
         self.n_balls = sum(self.pattern) // self.period # TODO error if not divisible
 
-        # drawing
-        self.rendering = rendering
-        self.frames = [] # for saving frames
-        if rendering:
-            self._draw_init()
+        self.state_dim = 6 + 4 * self.n_balls + 2 # (hold + elbow angle + elbow velocity) * 2 sides + (2 coordinates + 2 velocities) * number_of_balls + beat + catches
+        self.action_dim = 4
+
         self.verbose = verbose
         self.max_steps = max_steps
         self.current_step = 0
 
 
-    def reset(self):
+    def reset(self, rendering=False):
         """
         Resets the state and returns observations.
         """
+        self.rendering = rendering
+        self.frames = [] # for saving frames
+        if rendering:
+            self._draw_init()
+
         # body state (4 degrees of freedom)
         self.hold_l = True
         self.hold_r = True
@@ -157,19 +157,19 @@ class Juggler():
     def _get_reward(self):
         # reward for turning in the right direction
         turning_reward = ((self.d_elbow_l > 0) + (self.d_elbow_r > 0)) * 0.01 # TODO
-        # reward for throwing on the inside
-        open_reward = ((self.elbow_l < np.pi and not self.hold_l) +
-                       (self.elbow_r < np.pi and not self.hold_r)) * 0.1 # TODO
-        # reward for catching on the outside
-        close_reward = ((self.elbow_l > np.pi and self.hold_l) +
-                        (self.elbow_r > np.pi and self.hold_r)) * 0.1 # TODO
+        # # reward for throwing on the inside
+        # open_reward = ((self.elbow_l < np.pi and not self.hold_l) +
+        #                (self.elbow_r < np.pi and not self.hold_r)) * 0.1 # TODO
+        # # reward for catching on the outside
+        # close_reward = ((self.elbow_l > np.pi and self.hold_l) +
+        #                 (self.elbow_r > np.pi and self.hold_r)) * 0.1 # TODO
         # reward for flight
         dist = 0
         for ball in self.balls:
             if ball["dwell"] == -1 and ball["vel"][1] < 0: # distance only when flying down
                 dist += np.linalg.norm(ball["pos"] - [self.hand_l_pos, self.hand_r_pos][ball["target"]])
         fly_reward = 1/dist if dist != 0 else 0
-        return turning_reward + open_reward + close_reward + fly_reward
+        return turning_reward + fly_reward # + open_reward + close_reward
 
 
     def _update_joints(self):
@@ -339,12 +339,13 @@ class Juggler():
             balls += self.ax.plot(pos[0], pos[1], "ro", markersize=self.BALL_SIZE*20, animated=True)
         return balls
     
-    def render(self, filename=None):
+    def render(self, filename=None, show=False):
         self.ani = animation.ArtistAnimation(self.fig, self.frames, interval=Juggler.DT*1000, blit=True)
         writergif = animation.PillowWriter(fps=30) 
         if filename is not None:
             self.ani.save(f"{filename}.gif", writer=writergif)
-        plt.show()
+        if show:
+            plt.show()
 
 
 class OptimalAgent():
@@ -438,10 +439,11 @@ class OptimalAgent():
 
 
 if __name__ == "__main__":
-    PATTERN = [3,3,3] # [3,0,0]
+    PATTERN = [3,0,0]
     N_STEP = 1000
 
-    env = Juggler(PATTERN, rendering=True)
+    env = Juggler(PATTERN)
+    env.reset(rendering=True)
     agent = OptimalAgent(PATTERN)
 
     terminate = False
@@ -455,4 +457,4 @@ if __name__ == "__main__":
         print(reward)
         step += 1
 
-    env.render() # str(PATTERN) + "uniform_speed.gif")
+    env.render(str(PATTERN) + "_optimal.gif")

@@ -8,7 +8,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='PyTorch Soft Actor-Critic Args')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--task_name', type=str, default='Juggler')
-    parser.add_argument('--pattern', type=str, default='[3,3,3]')
+    parser.add_argument('--pattern', type=str, default='[3,0,0]')
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--gamma', type=float, default=0.99)
     parser.add_argument('--rho', type=float, default=0.01)
@@ -23,10 +23,13 @@ if __name__ == "__main__":
     wandb.login()
 
     run = wandb.init(
+        entity="tobiludw-university-t-bingen",
         project="JSC",
         name="test_experiment",
     )
     train_sac(args.seed, run, args)
+
+
 
 
 

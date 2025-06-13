@@ -15,16 +15,18 @@ NOTE left and right are as seen from the front, not from the juggler's perspecti
 
 class Juggler():
     DT = 0.01 # time between frames
-    GRAVITY = -2
+    GRAVITY = -2 # downwards acceleration (should be negative)
     BALL_SPEED = 5 # TODO remove this, should be as quick as the hand?
-    ELBOW_SPEED = 3.5 # TODO rename?
-    SHOULDER_RANGE = np.radians(5) # maximal degrees
+    ELBOW_SPEED = 3.8 # TODO rename?
+    SHOULDER_RANGE = np.radians(5) # maximal degrees # TODO not needed currently because fixed
     SHOULDER_L_POS = np.array([0, 2])
     SHOULDER_R_POS = np.array([2, 2])
     UPPERARM_LENGTH = 1.5
     LOWERARM_LENGTH = 0.5
     CATCH_TOLERANCE = 0.5
     BALL_SIZE = 1
+    # height of highest points of the parabola that the ball should pass through
+    APEX_HEIGHT = lambda height: 0.5 + height / 3
 
 
     def __init__(self, pattern, verbose=True, max_steps=500):
@@ -71,7 +73,7 @@ class Juggler():
 
         # ball state
         self.time = 0 # absolute time
-        self.beat = 0 # beat is incremented with every catch and throw
+        self.beat = 0 # throw counter # TODO account for 0 and 2, which are not classical throws
         self.catches = 0 # catch counter
         self.balls = []
         self._init_pattern() # TODO can we change pattern of juggler after __init__?
@@ -150,33 +152,34 @@ class Juggler():
         obs = [self.hold_l, self.hold_r, self.elbow_l, self.elbow_r, self.d_elbow_l, self.d_elbow_r]
         for ball in self.balls:
             obs += [ball["pos"][0], ball["pos"][1], ball["vel"][0], ball["vel"][1]]
-        obs += [self.beat, self.catches] # TODO optional
+        obs += [self.beat, self.catches]
         return obs
 
 
     def _get_reward(self):
         # reward for turning in the right direction
         turning_reward = ((self.d_elbow_l > 0) + (self.d_elbow_r > 0)) * 0.01 # TODO
-<<<<<<< HEAD
-        # reward for throwing on the inside
-        #open_reward = ((self.elbow_l < np.pi and not self.hold_l) +
-        #               (self.elbow_r < np.pi and not self.hold_r)) * 0.1 # TODO
-        # reward for catching on the outside
-        #close_reward = ((self.elbow_l > np.pi and self.hold_l) +
-        #                (self.elbow_r > np.pi and self.hold_r)) * 0.1 # TODO
-=======
         # # reward for throwing on the inside
         # open_reward = ((self.elbow_l < np.pi and not self.hold_l) +
         #                (self.elbow_r < np.pi and not self.hold_r)) * 0.1 # TODO
         # # reward for catching on the outside
         # close_reward = ((self.elbow_l > np.pi and self.hold_l) +
         #                 (self.elbow_r > np.pi and self.hold_r)) * 0.1 # TODO
->>>>>>> a404a5c14c0de88d0060e6f7eaa4c563460ae96d
         # reward for flight
         dist = 0
         for ball in self.balls:
-            if ball["dwell"] == -1 and ball["vel"][1] < 0: # distance only when flying down
-                dist += np.linalg.norm(ball["pos"] - [self.hand_l_pos, self.hand_r_pos][ball["target"]])
+            if ball["dwell"] == -1: # if ball flying
+                height = ball["height"]
+                target = ball["target"]
+                target_hand_pos = np.array([self.hand_l_pos, self.hand_r_pos][target])
+                target_elbow_pos = np.array([self.elbow_l_pos, self.elbow_r_pos][target])
+                apex = [1 if height % 2 == 1 else target_elbow_pos[0], Juggler.APEX_HEIGHT(height)]
+                before = ball["pos"][0] < apex[0] if target == 1 else ball["pos"][0] > apex[0]
+                if before: # if ball "before" apex: dist = distance(ball, apex) + distance(apex, elbow)
+                    d = np.linalg.norm(ball["pos"] - apex) + np.linalg.norm(apex - target_elbow_pos)
+                else: # if ball "behind" apex: dist = distance(ball, hand)
+                    d = np.linalg.norm(ball["pos"] - target_hand_pos)
+                dist += d
         fly_reward = 1/dist if dist != 0 else 0
         return turning_reward + fly_reward # + open_reward + close_reward
 
@@ -224,6 +227,7 @@ class Juggler():
         """
         ball["height"] = self.pattern[self.beat % self.period]
         ball["origin"] = ball["dwell"]
+        print("height", ball["height"])
         ball["target"] = ball["origin"] if ball["height"] % 2 == 0 else 1-ball["origin"]
         ball["dwell"] = -1 # in air
         ball["beat"] = self.beat # TODO needed?
@@ -258,7 +262,6 @@ class Juggler():
         beats = self.beat - ball["beat"] # beats between
         if beats == ball["height"]:
             ball["dwell"] = target
-            self.beat += 1
             self.catches += 1
             if self.verbose:
                 print("catch!")
@@ -280,12 +283,12 @@ class Juggler():
                 ball["pos"] = self.hand_r_pos
                 ball["vel"] = self.hand_r_vel
 
-            # when hand with ball opens, throw top ball
+            # when hand with ball opens, throw top ball of that hand
             if (not self.hold_l and ball["dwell"] == 0) \
             or (not self.hold_r and ball["dwell"] == 1):
                 if bid == self.beat % self.period: # if multiple balls in hand (at start), throw the right one
                     if self.verbose:
-                        print("throw ball", bid)
+                        print("throw ball", bid, " at angle ", self.elbow_l/np.pi if ball["dwell"] == 0 else self.elbow_r/np.pi)
                         print("initial v:", ball["vel"])
                     self._throw_ball(ball)
             
@@ -320,8 +323,9 @@ class Juggler():
     def _draw(self):
         body = self._draw_body()
         arms = self._draw_arms()
+        apex = self._draw_apex()
         balls = self._draw_balls()
-        self.frames += [body + arms + balls]
+        self.frames += [body + arms + apex + balls]
 
     def _draw_init(self):
         self.fig = plt.figure(figsize=(5,5))
@@ -343,10 +347,26 @@ class Juggler():
 
     def _draw_balls(self):
         balls = []
+        colors = ["r", "g", "b", "y", "m", "c"]
         for i, ball in enumerate(self.balls):
             pos = ball["pos"]
-            balls += self.ax.plot(pos[0], pos[1], "ro", markersize=self.BALL_SIZE*20, animated=True)
+            balls += self.ax.plot(pos[0], pos[1], colors[i] + "o", markersize=self.BALL_SIZE*20, animated=True)
         return balls
+
+    def _draw_apex(self):
+        # draw the highest point of the current throw
+        i = self.beat - 1
+        ball = self.balls[i%self.n_balls]
+        try:
+            height = ball["height"]
+            target = ball["target"]
+            target_elbow_pos = np.array([self.elbow_l_pos, self.elbow_r_pos][target])
+            apex = [1 if height % 2 == 1 else target_elbow_pos[0], Juggler.APEX_HEIGHT(height)]
+            colors = ["r", "g", "b", "y", "m", "c"]
+            return self.ax.plot(apex[0], apex[1], colors[i] + "*", markersize=10)
+        except KeyError:
+            return []
+        
     
     def render(self, filename=None, show=False):
         self.ani = animation.ArtistAnimation(self.fig, self.frames, interval=Juggler.DT*1000, blit=True)
@@ -396,8 +416,7 @@ class OptimalAgent():
         elbow_l, elbow_r, d_elbow_l, d_elbow_r = observations[2:6]
 
         # current beat
-        if elbow_l == 0 or elbow_r == 0: # when arm crosses 0, start new beat
-            self.beat += 1
+        self.beat = observations[-2]
         throw_hand = self.beat % 2
 
         # current throw
@@ -435,10 +454,8 @@ class OptimalAgent():
 
         # open hands for throw on the inside depending on throw angle
         # and close hand for catch on the outside (can catch with hand closed)
-        hold_l = True
-        hold_r = True
-        # hold_l = elbow_l < theta or np.pi*2/3 < elbow_l
-        # hold_r = elbow_r < theta or np.pi*2/3 < elbow_r
+        hold_l = elbow_l < theta or np.pi*2/3 < elbow_l
+        hold_r = elbow_r < theta or np.pi*2/3 < elbow_r
 
         # TODO keep track of time
         # self.time += self.DT
@@ -452,13 +469,12 @@ if __name__ == "__main__":
     N_STEP = 1000
 
     env = Juggler(PATTERN)
-    env.reset(rendering=True)
     agent = OptimalAgent(PATTERN)
 
     terminate = False
     rewards = []
     step = 0
-    obs = env.reset()
+    obs = env.reset(rendering=True)
     while not terminate and step < N_STEP:
         ctrl = agent.act(obs)
         obs, reward, terminate = env.step(ctrl)
@@ -466,4 +482,4 @@ if __name__ == "__main__":
         print(reward)
         step += 1
 
-    env.render(str(PATTERN) + "_optimal.gif")
+    env.render("./render/test_" + str(PATTERN) + "_optimal")

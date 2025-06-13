@@ -27,7 +27,7 @@ def evaluate(test_env, agent, device, num_episodes=2):
 def train_sac(seed, run,args):
     pattern = [3, 3, 3]
     env = Juggler(pattern, rendering=False, verbose=False)
-    test_env = Juggler(pattern, rendering=False, verbose=False)
+    test_env = Juggler(pattern, rendering=True, verbose=False)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -92,9 +92,9 @@ def train_sac(seed, run,args):
                     actor_loss.backward()
                     optimizer_actor.step()
 
-                    # optimizer_alpha.zero_grad()
-                    # alpha_loss.backward()
-                    # optimizer_alpha.step()
+                    optimizer_alpha.zero_grad()
+                    alpha_loss.backward()
+                    optimizer_alpha.step()
 
                     agent.soft_update()
 

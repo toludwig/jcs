@@ -508,7 +508,7 @@ class SACContinuous(SAC):
         a, log_probs, _ = self.get_action_probabilities(s) # get all action probabilities and log probs
         q_prime = self.get_q_vals(s, a, target = False)
         loss = ((self.log_alpha.exp().detach() * log_probs) - q_prime).mean()
-        alpha_loss = (self.log_alpha.exp() * (-log_probs - self.target_entropy).detach()).mean()
+        alpha_loss = (self.log_alpha * (-log_probs - self.target_entropy).detach()).mean()
         return loss, alpha_loss
 
 

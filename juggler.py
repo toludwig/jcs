@@ -158,18 +158,18 @@ class Juggler():
         # reward for turning in the right direction
         turning_reward = ((self.d_elbow_l > 0) + (self.d_elbow_r > 0)) * 0.01 # TODO
         # reward for throwing on the inside
-        open_reward = ((self.elbow_l < np.pi and not self.hold_l) +
-                       (self.elbow_r < np.pi and not self.hold_r)) * 0.1 # TODO
+        #open_reward = ((self.elbow_l < np.pi and not self.hold_l) +
+        #               (self.elbow_r < np.pi and not self.hold_r)) * 0.1 # TODO
         # reward for catching on the outside
-        close_reward = ((self.elbow_l > np.pi and self.hold_l) +
-                        (self.elbow_r > np.pi and self.hold_r)) * 0.1 # TODO
+        #close_reward = ((self.elbow_l > np.pi and self.hold_l) +
+        #                (self.elbow_r > np.pi and self.hold_r)) * 0.1 # TODO
         # reward for flight
         dist = 0
         for ball in self.balls:
             if ball["dwell"] == -1 and ball["vel"][1] < 0: # distance only when flying down
                 dist += np.linalg.norm(ball["pos"] - [self.hand_l_pos, self.hand_r_pos][ball["target"]])
         fly_reward = 1/dist if dist != 0 else 0
-        return turning_reward + open_reward + close_reward + fly_reward
+        return turning_reward + fly_reward # + open_reward + close_reward
 
 
     def _update_joints(self):

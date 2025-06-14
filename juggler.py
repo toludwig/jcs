@@ -23,9 +23,9 @@ class Juggler():
     SHOULDER_R_POS = np.array([2, 2])
     UPPERARM_LENGTH = 1.5
     LOWERARM_LENGTH = 0.5
-    CATCH_TOLERANCE = 0.5
+    CATCH_TOLERANCE = 0.2
     BALL_SIZE = 1
-    # height of highest points of the parabola that the ball should pass through
+    # height of highest point of the parabola that the ball should pass through
     APEX_HEIGHT = lambda height: 0.5 + height / 3
 
 
@@ -123,8 +123,15 @@ class Juggler():
         self.d_elbow_r += cont_controls[1] * Juggler.DT
         self.elbow_l   += self.d_elbow_l   * Juggler.DT
         self.elbow_r   += self.d_elbow_r   * Juggler.DT
-        self.elbow_l %= 2*np.pi
-        self.elbow_r %= 2*np.pi
+
+        # increase beat count with every zero crossing of either elbow
+        if self.elbow_l > 2*np.pi:
+            self.beat += 1
+            self.elbow_l %= 2*np.pi
+        if self.elbow_r > 2*np.pi:
+            self.beat += 1
+            self.elbow_r %= 2*np.pi
+
         self._update_joints()
 
         # simulate balls
@@ -230,12 +237,11 @@ class Juggler():
         print("height", ball["height"])
         ball["target"] = ball["origin"] if ball["height"] % 2 == 0 else 1-ball["origin"]
         ball["dwell"] = -1 # in air
-        ball["beat"] = self.beat # TODO needed?
+        ball["beat"] = self.beat
         if self.verbose:
             print("id", ball["id"])
             print("beat", self.beat)
             print("origin", ball["origin"])
-        self.beat += 1
 
 
     def _fly_ball(self, ball):
@@ -260,7 +266,7 @@ class Juggler():
         if dist > Juggler.CATCH_TOLERANCE:
             return
         beats = self.beat - ball["beat"] # beats between
-        if beats == ball["height"]:
+        if beats == ball["height"] - 1:
             ball["dwell"] = target
             self.catches += 1
             if self.verbose:
@@ -341,8 +347,8 @@ class Juggler():
     def _draw_arms(self):
         arm_l = np.vstack([Juggler.SHOULDER_L_POS, self.elbow_l_pos, self.hand_l_pos])
         arm_r = np.vstack([Juggler.SHOULDER_R_POS, self.elbow_r_pos, self.hand_r_pos])
-        arm_l = self.ax.plot(arm_l[:,0], arm_l[:,1], c="b", animated=True)
-        arm_r = self.ax.plot(arm_r[:,0], arm_r[:,1], c="b", animated=True)
+        arm_l = self.ax.plot(arm_l[:,0], arm_l[:,1], c="k", animated=True)
+        arm_r = self.ax.plot(arm_r[:,0], arm_r[:,1], c="k", animated=True)
         return arm_l + arm_r
 
     def _draw_balls(self):
@@ -355,17 +361,16 @@ class Juggler():
 
     def _draw_apex(self):
         # draw the highest point of the current throw
-        i = self.beat - 1
-        ball = self.balls[i%self.n_balls]
-        try:
-            height = ball["height"]
-            target = ball["target"]
-            target_elbow_pos = np.array([self.elbow_l_pos, self.elbow_r_pos][target])
-            apex = [1 if height % 2 == 1 else target_elbow_pos[0], Juggler.APEX_HEIGHT(height)]
-            colors = ["r", "g", "b", "y", "m", "c"]
-            return self.ax.plot(apex[0], apex[1], colors[i] + "*", markersize=10)
-        except KeyError:
-            return []
+        apex_stars = []
+        for ball in self.balls:
+            if ball["dwell"] == -1: # if flying
+                height = ball["height"]
+                target = ball["target"]
+                target_elbow_pos = np.array([self.elbow_l_pos, self.elbow_r_pos][target])
+                apex = [1 if height % 2 == 1 else target_elbow_pos[0], Juggler.APEX_HEIGHT(height)]
+                colors = ["r", "g", "b", "y", "m", "c"]
+                apex_stars += self.ax.plot(apex[0], apex[1], colors[ball["id"]] + "*", markersize=10)
+        return apex_stars
         
     
     def render(self, filename=None, show=False):
@@ -465,7 +470,7 @@ class OptimalAgent():
 
 
 if __name__ == "__main__":
-    PATTERN = [3,0,0]
+    PATTERN = [3,3,3]
     N_STEP = 1000
 
     env = Juggler(PATTERN)

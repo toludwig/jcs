@@ -27,6 +27,7 @@ class Juggler():
     BALL_SIZE = 1
     # height of highest point of the parabola that the ball should pass through
     APEX_HEIGHT = lambda height: 0.5 + height / 3
+    APEX_TOLERANCE = 0.5 # radius of area aronud apex where throw should pass through
 
 
     def __init__(self, pattern, verbose=True, max_steps=500):
@@ -76,7 +77,7 @@ class Juggler():
         self.beat = 0 # throw counter # TODO account for 0 and 2, which are not classical throws
         self.catches = 0 # catch counter
         self.balls = []
-        self._init_pattern() # TODO can we change pattern of juggler after __init__?
+        self._init_balls() # TODO can we change pattern of juggler after __init__?
         return self._get_observations()
 
 
@@ -127,9 +128,13 @@ class Juggler():
         # increase beat count with every zero crossing of either elbow
         if self.elbow_l > 2*np.pi:
             self.beat += 1
+            if self.verbose:
+                print("beat", self.beat)
             self.elbow_l %= 2*np.pi
         if self.elbow_r > 2*np.pi:
             self.beat += 1
+            if self.verbose:
+                print("beat", self.beat)
             self.elbow_r %= 2*np.pi
 
         self._update_joints()
@@ -207,23 +212,29 @@ class Juggler():
         self.hand_r_vel = np.array([-np.cos(self.elbow_r), np.sin(self.elbow_r)]) * Juggler.LOWERARM_LENGTH * Juggler.BALL_SPEED
 
 
-    def _init_pattern(self):
+    def _init_balls(self):
         """
-        Init pattern and balls.
-        All balls are placed in the two hands but only the top ball is thrown.
+        Init balls.
+        All balls are placed in the two hands according to the pattern.
+        Zero-throws do not require a ball.
         """
-        # init all balls
-        for bid in range(self.n_balls):
-            origin = bid % 2
-            # height = self.pattern[self.beat % self.period]
-            # target = origin if height % 2 == 0 else 1-origin
+        n_placed = 0
+        for beat, height in enumerate(self.pattern):
+            if height == 0 or n_placed == self.n_balls: # only n_balls and no zero-throws
+                continue
+            # if non-zero throw, place in alternating hands
+            origin = beat % 2
             ball = {
-                "id": bid,
+                "id": n_placed,
                 "pos": [self.hand_l_pos, self.hand_r_pos][origin],
                 "vel": [self.hand_l_vel, self.hand_r_vel][origin],
+                "beat": beat,
                 "dwell":  origin, # in which hand the ball dwells, -1 if in air
                 "origin": origin, # hand in which the ball starts
+                "height": height,
+                "target": origin if height % 2 == 0 else 1-origin
             }
+            n_placed += 1
             self.balls += [ball]
 
 
@@ -234,14 +245,11 @@ class Juggler():
         """
         ball["height"] = self.pattern[self.beat % self.period]
         ball["origin"] = ball["dwell"]
-        print("height", ball["height"])
         ball["target"] = ball["origin"] if ball["height"] % 2 == 0 else 1-ball["origin"]
         ball["dwell"] = -1 # in air
-        ball["beat"] = self.beat
+        #ball["beat"] = self.beat
         if self.verbose:
-            print("id", ball["id"])
-            print("beat", self.beat)
-            print("origin", ball["origin"])
+            print("throw ball", ball["id"], "at height", ball["height"], "from hand", ball["origin"])
 
 
     def _fly_ball(self, ball):
@@ -265,12 +273,13 @@ class Juggler():
         dist = np.linalg.norm(ball["pos"] - target_pos)
         if dist > Juggler.CATCH_TOLERANCE:
             return
-        beats = self.beat - ball["beat"] # beats between
+        beats = self.beat - ball["beat"] # beats while in air
         if beats == ball["height"] - 1:
+            ball["beat"] += beats + 1
             ball["dwell"] = target
             self.catches += 1
             if self.verbose:
-                print("catch!")
+                print("catch ball", ball["id"], "in hand", ball["target"])
 
 
     def _simulate_balls(self):
@@ -280,7 +289,7 @@ class Juggler():
         If hand opened, ball takes over tangential velocity and flies in a parabola.
         If ball in reach for catching (and hand in catching state), ball snaps to hand.
         """
-        for bid, ball in enumerate(self.balls):
+        for ball in self.balls:
             # keeping the ball in hand
             if self.hold_l and ball["dwell"] == 0:
                 ball["pos"] = self.hand_l_pos
@@ -292,10 +301,7 @@ class Juggler():
             # when hand with ball opens, throw top ball of that hand
             if (not self.hold_l and ball["dwell"] == 0) \
             or (not self.hold_r and ball["dwell"] == 1):
-                if bid == self.beat % self.period: # if multiple balls in hand (at start), throw the right one
-                    if self.verbose:
-                        print("throw ball", bid, " at angle ", self.elbow_l/np.pi if ball["dwell"] == 0 else self.elbow_r/np.pi)
-                        print("initial v:", ball["vel"])
+                if ball["beat"] == self.beat: # if multiple balls in hand (at start), throw the right one
                     self._throw_ball(ball)
             
             # if ball not in hand, let it fly
@@ -392,10 +398,10 @@ class OptimalAgent():
         0: 0,
         1: np.pi/6,
         2: np.nan,
-        3: np.pi/3, # TODO
-        4: 5*np.pi/8,
-        5: 3*np.pi/8,
-        6: 6*np.pi/10
+        3: np.pi/3,
+        4: 11*np.pi/20,
+        5: 7*np.pi/16,
+        6: 16*np.pi/30
     }
     # TODO speed with which to throw
     height2omega = {
@@ -470,7 +476,7 @@ class OptimalAgent():
 
 
 if __name__ == "__main__":
-    PATTERN = [3,3,3]
+    PATTERN = [5,3,1] # [4,4,4,4]
     N_STEP = 1000
 
     env = Juggler(PATTERN)
@@ -484,7 +490,7 @@ if __name__ == "__main__":
         ctrl = agent.act(obs)
         obs, reward, terminate = env.step(ctrl)
         rewards += [reward]
-        print(reward)
+        #print(reward)
         step += 1
 
     env.render("./render/test_" + str(PATTERN) + "_optimal")

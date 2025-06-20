@@ -1,9 +1,7 @@
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
+import pygame
 import gymnasium as gym
 from gymnasium import spaces
-
 from gymnasium.envs.registration import register
 
 register(
@@ -14,22 +12,22 @@ register(
 
 class Juggler(gym.Env):
     DT = 0.01 # time between frames
-    GRAVITY = -2 # downwards acceleration (should be negative)
-    BALL_SPEED = 5 # TODO remove this, should be as quick as the hand?
-    ELBOW_SPEED = 3.8 # TODO rename?
+    GRAVITY = -9.81 # downwards acceleration (should be negative)
+    BALL_SPEED = 1 # TODO remove this, should be as quick as the hand?
     SHOULDER_RANGE = np.radians(5) # maximal degrees # TODO not needed currently because fixed
-    SHOULDER_L_POS = np.array([0, 2])
-    SHOULDER_R_POS = np.array([2, 2])
-    UPPERARM_LENGTH = 1.5
-    LOWERARM_LENGTH = 0.5
-    CATCH_TOLERANCE = 0.2
-    BALL_SIZE = 1
+    SHOULDER_L_POS = np.array([150, 250])
+    SHOULDER_R_POS = np.array([250, 250])
+    UPPERARM_LENGTH = 90
+    LOWERARM_LENGTH = 30
+    CATCH_TOLERANCE = 10
+    BALL_RADIUS = 10 # for collision detection
+
     # height of highest point of the parabola that the ball should pass through
     APEX_HEIGHT = lambda height: 0.5 + height / 3
     APEX_TOLERANCE = 0.5 # radius of area aronud apex where throw should pass through
 
 
-    def __init__(self, pattern, verbose=True, max_steps=500, render_mode=None):
+    def __init__(self, pattern, verbose=True, render_mode=None):
         """
         Note that pattern defines how the environment behaves,
         e.g. it is crucial for the reward function (for checking if the right ball is caught),
@@ -48,27 +46,20 @@ class Juggler(gym.Env):
         
         self.action_space = spaces.Box(low=-1, high=1, shape=(self.action_dim,), dtype=np.float32)
         self.observation_space = spaces.Box(low=np.array([-1, -1, 0, 0,-10, -10] + self.n_balls * [-2, -2, -10, -10]),
-                                             high=np.array([1, 1, 2*np.pi, 2*np.pi, 10, 10] + self.n_balls * [4, 10, 10, 10]),
+                                            high=np.array([1, 1, 2*np.pi, 2*np.pi, 10, 10] + self.n_balls * [4, 10, 10, 10], dtype=np.float32),
                                             shape=(self.state_dim,), dtype=np.float32)
 
         self.verbose = verbose
-        self.max_steps = max_steps
-        self.current_step = 0
         self.render_mode = render_mode
-        self.screen_width = 500
-        self.screen_height = 500
-        self.screen = None
-        self.clock = None
+        self.screen = pygame.display.set_mode((400, 600))
+        self.clock = pygame.time.Clock()
         self.isopen = True
-        self.frames = []
-        
 
 
     def reset(self, *, seed=None, options=None):
         """
         Resets the state and returns observations.
         """
-
         super().reset(seed=seed)
         
         # body state (4 degrees of freedom)
@@ -76,8 +67,8 @@ class Juggler(gym.Env):
         self.hold_r = True
         self.elbow_l = 0
         self.elbow_r = 2 * np.pi / 3 # TODO initially shifted by 2*pi / len(pattern)
-        self.d_elbow_l = Juggler.ELBOW_SPEED
-        self.d_elbow_r = Juggler.ELBOW_SPEED
+        self.d_elbow_l = 30
+        self.d_elbow_r = 30
         # TODO fix shoulders? (make them static and not controllable)
         self.shoulder_l = np.radians(10)
         self.shoulder_r = np.radians(-10)
@@ -128,8 +119,6 @@ class Juggler(gym.Env):
         TODO scaled to [-1, 1], such that the controller can be agnostic about their range.
         Returns observations including body and ball positions TODO as well as reward.
         """
-        self.current_step += 1
-
         # update discrete body state
         self.hold_l, self.hold_r = action[:2] > 0 # TODO make it sigmoid
         cont_controls = action[2:]
@@ -157,7 +146,7 @@ class Juggler(gym.Env):
         # simulate balls
         self.time += Juggler.DT
         self._simulate_balls()
-        terminate = self._check_drop() # or self._check_collision() or self.current_step > self.max_steps
+        terminate = self._check_drop() or self._check_collision()
 
         # get_reward
         reward = self._get_reward()
@@ -166,12 +155,13 @@ class Juggler(gym.Env):
         obs = self._get_observations()
         return obs, reward, terminate, False, {"catches": self.catches, "beats": self.beats}
 
+
     def close(self):
         if self.render_mode == "human":
-            import pygame
             pygame.display.quit()
             pygame.quit()
             self.isopen = False
+
 
     def _get_observations(self):
         """
@@ -187,12 +177,6 @@ class Juggler(gym.Env):
     def _get_reward(self):
         # reward for turning in the right direction
         turning_reward = ((self.d_elbow_l > 0) + (self.d_elbow_r > 0)) * 0.01 # TODO
-        # # reward for throwing on the inside
-        # open_reward = ((self.elbow_l < np.pi and not self.hold_l) +
-        #                (self.elbow_r < np.pi and not self.hold_r)) * 0.1 # TODO
-        # # reward for catching on the outside
-        # close_reward = ((self.elbow_l > np.pi and self.hold_l) +
-        #                 (self.elbow_r > np.pi and self.hold_r)) * 0.1 # TODO
         # reward for flight
         dist = 0
         for ball in self.balls:
@@ -209,7 +193,7 @@ class Juggler(gym.Env):
                     d = np.linalg.norm(ball["pos"] - target_hand_pos)
                 dist += d
         fly_reward = 1/dist if dist != 0 else 0
-        return turning_reward + fly_reward # + open_reward + close_reward
+        return turning_reward + fly_reward
 
 
     def _update_joints(self):
@@ -224,8 +208,8 @@ class Juggler(gym.Env):
         self.hand_r_pos = np.array([-np.sin(self.elbow_r), -np.cos(self.elbow_r)]) * Juggler.LOWERARM_LENGTH + self.elbow_r_pos
 
         # compute hand tangential velocity (which balls take over when thrown)
-        self.hand_l_vel = np.array([ np.cos(self.elbow_l), np.sin(self.elbow_l)]) * Juggler.LOWERARM_LENGTH * Juggler.BALL_SPEED
-        self.hand_r_vel = np.array([-np.cos(self.elbow_r), np.sin(self.elbow_r)]) * Juggler.LOWERARM_LENGTH * Juggler.BALL_SPEED
+        self.hand_l_vel = np.array([ np.cos(self.elbow_l), np.sin(self.elbow_l)]) * Juggler.LOWERARM_LENGTH
+        self.hand_r_vel = np.array([-np.cos(self.elbow_r), np.sin(self.elbow_r)]) * Juggler.LOWERARM_LENGTH
 
 
     def _init_balls(self):
@@ -248,7 +232,8 @@ class Juggler(gym.Env):
                 "dwell":  origin, # in which hand the ball dwells, -1 if in air
                 "origin": origin, # hand in which the ball starts
                 "height": height,
-                "target": origin if height % 2 == 0 else 1-origin
+                "target": origin if height % 2 == 0 else 1-origin,
+                "color": [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255)][n_placed % 5]
             }
             n_placed += 1
             self.balls += [ball]
@@ -264,6 +249,9 @@ class Juggler(gym.Env):
         ball["target"] = ball["origin"] if ball["height"] % 2 == 0 else 1-ball["origin"]
         ball["dwell"] = -1 # in air
         #ball["beat"] = self.beat
+        print("ball_vel", ball["vel"])
+        print("hand_l_vel", self.hand_l_vel)
+        print("hand_r_vel", self.hand_r_vel)
         if self.verbose:
             print("throw ball", ball["id"], "at height", ball["height"], "from hand", ball["origin"])
 
@@ -309,10 +297,10 @@ class Juggler(gym.Env):
             # keeping the ball in hand
             if self.hold_l and ball["dwell"] == 0:
                 ball["pos"] = self.hand_l_pos
-                ball["vel"] = self.hand_l_vel
+                ball["vel"] = self.hand_l_vel * self.BALL_SPEED
             elif self.hold_r and ball["dwell"] == 1:
                 ball["pos"] = self.hand_r_pos
-                ball["vel"] = self.hand_r_vel
+                ball["vel"] = self.hand_r_vel * self.BALL_SPEED
 
             # when hand with ball opens, throw top ball of that hand
             if (not self.hold_l and ball["dwell"] == 0) \
@@ -337,67 +325,66 @@ class Juggler(gym.Env):
 
     def _check_collision(self):
         """
-        If balls collide in midair, they will drop,
-        so episode should end.
+        If balls collide in midair, episode should end.
         """
         for i in range(self.n_balls):
             for j in range(i+1, self.n_balls):
                 if self.balls[i]["dwell"] == -1 and self.balls[j]["dwell"] == -1: # both balls flying
-                    if np.linalg.norm(self.balls[i]["pos"] - self.balls[j]["pos"]) < Juggler.BALL_SIZE / 2:
+                    if np.linalg.norm(self.balls[i]["pos"] - self.balls[j]["pos"]) < Juggler.BALL_RADIUS:
                         return True
         return False
 
+    
+    def render(self, filename=None, show=False):
+        if self.render_mode is None:
+            return
 
-    def _draw(self):
-        body = self._draw_body()
-        arms = self._draw_arms()
-        apex = self._draw_apex()
-        balls = self._draw_balls()
-        self.frames += [body + arms + apex + balls]
+        WIDTH, HEIGHT = 400, 600
 
-    def _draw_init(self):
-        self.fig = plt.figure(figsize=(5,5))
-        self.ax = plt.axes(xlim=[-2,4], ylim=[-2,4])
-        self.ax.axis("off")
+        def to_pygame_coords(pos):
+            # pos: (x, y) as numpy array or tuple
+            x, y = pos
+            return int(x), int(HEIGHT - y)
 
-    def _draw_body(self):
-        body, = self.ax.fill([Juggler.SHOULDER_L_POS[0], Juggler.SHOULDER_R_POS[0], 0.75*Juggler.SHOULDER_R_POS[0], 0.25*Juggler.SHOULDER_R_POS[0]],
-                             [Juggler.SHOULDER_L_POS[1], Juggler.SHOULDER_R_POS[1], 0, 0], c="lightgrey", animated=True)
-        head = self.ax.add_patch(plt.Circle((1, 2.6), 0.5, color="lightgrey", zorder=0))
-        return [body, head]
+        self.surf = pygame.Surface((WIDTH, HEIGHT))
+        self.surf.fill((255, 255, 255)) # white background
 
-    def _draw_arms(self):
-        arm_l = np.vstack([Juggler.SHOULDER_L_POS, self.elbow_l_pos, self.hand_l_pos])
-        arm_r = np.vstack([Juggler.SHOULDER_R_POS, self.elbow_r_pos, self.hand_r_pos])
-        arm_l = self.ax.plot(arm_l[:,0], arm_l[:,1], c="k", animated=True)
-        arm_r = self.ax.plot(arm_r[:,0], arm_r[:,1], c="k", animated=True)
-        return arm_l + arm_r
+        # draw the body
+        body_points = [
+            to_pygame_coords((175, 125)),
+            to_pygame_coords((225, 125)),
+            to_pygame_coords(Juggler.SHOULDER_R_POS),
+            to_pygame_coords(Juggler.SHOULDER_L_POS)
+        ]
+        pygame.draw.polygon(self.surf, color=(215, 215, 255), points=body_points)
+        pygame.draw.circle(self.surf, color=(215, 215, 255), center=to_pygame_coords((200, 300)), radius=30)
 
-    def _draw_balls(self):
-        balls = []
-        colors = ["r", "g", "b", "y", "m", "c"]
-        for i, ball in enumerate(self.balls):
-            pos = ball["pos"]
-            balls += self.ax.plot(pos[0], pos[1], colors[i] + "o", markersize=self.BALL_SIZE*20, animated=True)
-        return balls
+        # draw the upper arms
+        pygame.draw.line(self.surf, color=(0, 0, 0), start_pos=to_pygame_coords(Juggler.SHOULDER_L_POS), end_pos=to_pygame_coords(self.elbow_l_pos), width=2)
+        pygame.draw.line(self.surf, color=(0, 0, 0), start_pos=to_pygame_coords(Juggler.SHOULDER_R_POS), end_pos=to_pygame_coords(self.elbow_r_pos), width=2)
 
-    def _draw_apex(self):
-        # draw the highest point of the current throw
-        apex_stars = []
+        # draw the lower arms
+        pygame.draw.line(self.surf, color=(0, 0, 0), start_pos=to_pygame_coords(self.elbow_l_pos), end_pos=to_pygame_coords(self.hand_l_pos), width=2)
+        pygame.draw.line(self.surf, color=(0, 0, 0), start_pos=to_pygame_coords(self.elbow_r_pos), end_pos=to_pygame_coords(self.hand_r_pos), width=2)
+
+        # draw the balls
+        for ball in self.balls:
+            pygame.draw.circle(self.surf, color=ball["color"], center=to_pygame_coords(ball["pos"]), radius=Juggler.BALL_RADIUS)
+
+        # draw the apex
         for ball in self.balls:
             if ball["dwell"] == -1: # if flying
                 height = ball["height"]
                 target = ball["target"]
                 target_elbow_pos = np.array([self.elbow_l_pos, self.elbow_r_pos][target])
                 apex = [1 if height % 2 == 1 else target_elbow_pos[0], Juggler.APEX_HEIGHT(height)]
-                colors = ["r", "g", "b", "y", "m", "c"]
-                apex_stars += self.ax.plot(apex[0], apex[1], colors[ball["id"]] + "*", markersize=10)
-        return apex_stars
-        
-    
-    def render(self, filename=None, show=False):
-        if self.render_mode is not None:
-            return 
+                pygame.draw.circle(self.surf, color=ball["color"], center=to_pygame_coords(apex), radius=5)
+
+        self.screen.blit(self.surf, (0, 0))
+        pygame.display.flip()
+        self.clock.tick(30)  # Limit to 30 FPS
+
+
 
 class OptimalAgent():
     """
@@ -462,18 +449,8 @@ class OptimalAgent():
         #     dd_elbow_r = 0
 
         # constant velocity
-        dd_elbow_l = 0
-        dd_elbow_r = 0
-
-        # TODO adapt speed of catching hand
-        if throw_hand == 0: # catch_hand == 1
-            dd_elbow_r = 0
-        else:
-            dd_elbow_l = 0
-
-        # TODO fix shoulders?
-        # shoulder_l = np.sin(time) * Juggler.SHOULDER_RANGE + np.radians(10)
-        # shoulder_r = np.cos(time) * Juggler.SHOULDER_RANGE + np.radians(-10)
+        dd_elbow_l = 30 - d_elbow_l
+        dd_elbow_r = 30 - d_elbow_r
 
         # open hands for throw on the inside depending on throw angle
         # and close hand for catch on the outside (can catch with hand closed)
@@ -503,6 +480,5 @@ if __name__ == "__main__":
         obs, reward, terminate, _, info = env.step(ctrl)
         rewards += [reward]
         #print(reward)
+        env.render()
         step += 1
-
-    # env.render("./render/test_" + str(PATTERN) + "_optimal")

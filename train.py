@@ -22,7 +22,6 @@ def evaluate(test_env, agent, device, train_episode, num_episodes=1):
             state = next_state
         all_episode_rewards.append(episode_reward)
 
-    print(train_episode)
     test_env.render("./render/episode_" + str(train_episode))
     wandb.log({"example": wandb.Video("./render/episode_" + str(train_episode) + ".gif", format="gif"),
                "eval_reward": np.mean(all_episode_rewards)
@@ -53,9 +52,10 @@ def train_sac(seed, run,args):
     num_episodes = 500
     episode_length = 1500
     buffer = Buffer(episode_length=episode_length, buffer_size=1000000, batch_size = args.batch_size)
-    num_random = 100 # how many steps to take random actions
+    num_random = 500 # how many steps to take random actions
 
     for i in range(num_episodes):
+        print(i)
         current_state = env.reset()
         current_state = torch.tensor(current_state).to(device)
         episode_s = torch.zeros(episode_length, state_dim)

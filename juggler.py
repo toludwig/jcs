@@ -26,11 +26,11 @@ class Juggler():
     CATCH_TOLERANCE = 0.2
     BALL_SIZE = 1
     # height of highest point of the parabola that the ball should pass through
-    APEX_HEIGHT = lambda height: 0.5 + height / 3
+    APEX_HEIGHT = lambda height: 0.5 + height**1.2 / 3
     APEX_TOLERANCE = 0.5 # radius of area aronud apex where throw should pass through
 
 
-    def __init__(self, pattern, verbose=True, max_steps=500):
+    def __init__(self, pattern, verbose=True, max_steps=500, sparse_reward=True):
         """
         Note that pattern defines how the environment behaves,
         e.g. it is crucial for the reward function (for checking if the right ball is caught),
@@ -45,8 +45,9 @@ class Juggler():
         self.action_dim = 4
 
         self.verbose = verbose
-        self.max_steps = max_steps
-        self.current_step = 0
+        self.max_steps = max_steps # TODO needed?
+        self.current_step = 0 # TODO needed?
+        self.sparse_reward = sparse_reward
 
 
     def reset(self, rendering=False):
@@ -113,7 +114,7 @@ class Juggler():
         Discrete controls are values to which the state is set immediately (not smoothly).
         Returns observations including body and ball positions TODO as well as reward.
         """
-        self.current_step += 1
+        self.current_step += 1 # TODO needed?
 
         # update discrete body state
         self.hold_l, self.hold_r = controls[:2] > 0 # TODO for continuous hold controls: 0 or negative means open, positive closed
@@ -139,13 +140,19 @@ class Juggler():
 
         self._update_joints()
 
+        # reset event reward (can increase in ball simulation if ball enters apex region or is caught)
+        self.event_reward = 0
+
         # simulate balls
         self.time += Juggler.DT
         self._simulate_balls()
-        terminate = self._check_drop() # or self._check_collision() or self.current_step > self.max_steps
+        terminate = self._check_drop() # TODO or self._check_collision() TODO or self.current_step > self.max_steps
 
-        # get_reward
-        reward = self._get_reward()
+        # get reward
+        if self.sparse_reward:
+            reward = self.event_reward
+        else:
+            reward = self._get_reward()
 
         # rendering
         if self.rendering:
@@ -170,14 +177,9 @@ class Juggler():
 
     def _get_reward(self):
         # reward for turning in the right direction
-        turning_reward = ((self.d_elbow_l > 0) + (self.d_elbow_r > 0)) * 0.01 # TODO
-        # # reward for throwing on the inside
-        # open_reward = ((self.elbow_l < np.pi and not self.hold_l) +
-        #                (self.elbow_r < np.pi and not self.hold_r)) * 0.1 # TODO
-        # # reward for catching on the outside
-        # close_reward = ((self.elbow_l > np.pi and self.hold_l) +
-        #                 (self.elbow_r > np.pi and self.hold_r)) * 0.1 # TODO
+        turning_reward = (int(self.d_elbow_l > 0) + int(self.d_elbow_r > 0)) * 0.01 # TODO tune magnitude?
         # reward for flight
+        # continuous reward, distance based
         dist = 0
         for ball in self.balls:
             if ball["dwell"] == -1: # if ball flying
@@ -193,7 +195,7 @@ class Juggler():
                     d = np.linalg.norm(ball["pos"] - target_hand_pos)
                 dist += d
         fly_reward = 1/dist if dist != 0 else 0
-        return turning_reward + fly_reward # + open_reward + close_reward
+        return turning_reward + fly_reward
 
 
     def _update_joints(self):
@@ -243,11 +245,14 @@ class Juggler():
         Release ball from hand.
         Every throw increases beat.
         """
-        ball["height"] = self.pattern[self.beat % self.period]
+        height = self.pattern[self.beat % self.period]
+        ball["height"] = height
         ball["origin"] = ball["dwell"]
         ball["target"] = ball["origin"] if ball["height"] % 2 == 0 else 1-ball["origin"]
         ball["dwell"] = -1 # in air
-        #ball["beat"] = self.beat
+        target_elbow_pos = np.array([self.elbow_l_pos, self.elbow_r_pos][ball["target"]])
+        ball["apex"] = [1 if height % 2 == 1 else target_elbow_pos[0], Juggler.APEX_HEIGHT(height)]
+        ball["apex_reached"] = False # not yet reached apex
         if self.verbose:
             print("throw ball", ball["id"], "at height", ball["height"], "from hand", ball["origin"])
 
@@ -256,6 +261,11 @@ class Juggler():
         # Euler integration for position and velocity
         ball["vel"] += np.array([0, Juggler.GRAVITY]) * Juggler.DT
         ball["pos"] += ball["vel"] * Juggler.DT
+
+        # if ball enters the apex region, give intermediary reward
+        if np.linalg.norm(ball["pos"] - ball["apex"]) < Juggler.APEX_TOLERANCE and not ball["apex_reached"]:
+            self.event_reward += 1 # TODO magnitude
+            ball["apex_reached"] = True
 
 
     def _try_catch_ball(self, ball):
@@ -278,8 +288,11 @@ class Juggler():
             ball["beat"] += beats + 1
             ball["dwell"] = target
             self.catches += 1
+            self.event_reward += 3 # reward for catch # TODO magnitude
             if self.verbose:
                 print("catch ball", ball["id"], "in hand", ball["target"])
+        else:
+            print("did not catch ball", ball["id"], "because wrong beat")
 
 
     def _simulate_balls(self):
@@ -476,7 +489,8 @@ class OptimalAgent():
 
 
 if __name__ == "__main__":
-    PATTERN = [5,3,1] # [4,4,4,4]
+    rendering = False
+    PATTERN = [4,4,4,4] # [5,3,1] # 
     N_STEP = 1000
 
     env = Juggler(PATTERN)
@@ -485,12 +499,17 @@ if __name__ == "__main__":
     terminate = False
     rewards = []
     step = 0
-    obs = env.reset(rendering=True)
+    obs = env.reset(rendering=rendering)
     while not terminate and step < N_STEP:
         ctrl = agent.act(obs)
         obs, reward, terminate = env.step(ctrl)
         rewards += [reward]
-        #print(reward)
+        print("reward", reward)
         step += 1
 
-    env.render("./render/test_" + str(PATTERN) + "_optimal")
+    if rendering:
+        env.render("./render/test_" + str(PATTERN) + "_optimal")
+    else:
+        plt.figure()
+        plt.plot(rewards)
+        plt.show()

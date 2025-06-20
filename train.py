@@ -52,7 +52,9 @@ def train_sac(seed, run,args):
     num_episodes = 500
     episode_length = 1500
     buffer = Buffer(episode_length=episode_length, buffer_size=1000000, batch_size = args.batch_size)
-    num_random = 500 # how many steps to take random actions
+
+    num_random = 500 # how many global steps to take random actions
+    global_step = 0
 
     for i in range(num_episodes):
         print(i)
@@ -67,8 +69,9 @@ def train_sac(seed, run,args):
         episode_loss_alpha = 0
         episode_loss_crit = 0
         for step in range(episode_length):
+            global_step += 1
             episode_s[step] = current_state
-            if step < num_random:
+            if global_step < num_random:
                 action = env.sample_action()
             else:
                 action = agent.act(current_state.float().to(device)).detach().cpu().numpy()

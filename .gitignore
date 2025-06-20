@@ -319,3 +319,5 @@ pip-selfcheck.json
 
 wandb/
 videos/
+runs/
+models/

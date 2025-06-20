@@ -2,7 +2,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import gymnasium as gym
+from gymnasium import spaces
 
+from gymnasium.envs.registration import register
+
+register(
+    id='Juggler-v0',
+    entry_point='Juggler_gym:Juggler',
+)
 
 
 class Juggler(gym.Env):
@@ -22,7 +29,7 @@ class Juggler(gym.Env):
     APEX_TOLERANCE = 0.5 # radius of area aronud apex where throw should pass through
 
 
-    def __init__(self, pattern, verbose=True, max_steps=500):
+    def __init__(self, pattern, verbose=True, max_steps=500, render_mode=None):
         """
         Note that pattern defines how the environment behaves,
         e.g. it is crucial for the reward function (for checking if the right ball is caught),
@@ -33,23 +40,37 @@ class Juggler(gym.Env):
         self.period = len(self.pattern)
         self.n_balls = sum(self.pattern) // self.period # TODO error if not divisible
 
-        self.state_dim = 6 + 4 * self.n_balls + 2 # (hold + elbow angle + elbow velocity) * 2 sides + (2 coordinates + 2 velocities) * number_of_balls + beat + catches
+        self.state_dim = 6 + 4 * self.n_balls # (hold + elbow angle + elbow velocity) * 2 sides + (2 coordinates + 2 velocities) * number_of_balls
         self.action_dim = 4
+        
+        self.beats = 0
+        self.catches = 0
+        
+        self.action_space = spaces.Box(low=-1, high=1, shape=(self.action_dim,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=np.array([-1, -1, 0, 0,-10, -10] + self.n_balls * [-2, -2, -10, -10]),
+                                             high=np.array([1, 1, 2*np.pi, 2*np.pi, 10, 10] + self.n_balls * [4, 10, 10, 10]),
+                                            shape=(self.state_dim,), dtype=np.float32)
 
         self.verbose = verbose
         self.max_steps = max_steps
         self.current_step = 0
+        self.render_mode = render_mode
+        self.screen_width = 500
+        self.screen_height = 500
+        self.screen = None
+        self.clock = None
+        self.isopen = True
+        self.frames = []
+        
 
 
-    def reset(self, rendering=False):
+    def reset(self, *, seed=None, options=None):
         """
         Resets the state and returns observations.
         """
-        self.rendering = rendering
-        self.frames = [] # for saving frames
-        if rendering:
-            self._draw_init()
 
+        super().reset(seed=seed)
+        
         # body state (4 degrees of freedom)
         self.hold_l = True
         self.hold_r = True
@@ -70,7 +91,10 @@ class Juggler(gym.Env):
         self.catches = 0 # catch counter
         self.balls = []
         self._init_balls() # TODO can we change pattern of juggler after __init__?
-        return self._get_observations()
+
+        if self.render_mode == "human":
+            self.render()
+        return self._get_observations(), {"catches": self.catches, "beats": self.beats}
 
 
     def sample_action(self):
@@ -97,19 +121,18 @@ class Juggler(gym.Env):
         return np.hstack([hold, elbow] + balls + [counters]) 
 
 
-    def step(self, controls):
+    def step(self, action):
         """
-        Apply discrete inputs and continuous forces to control body state.
+        Apply continuous forces to control body state.
         Continuous controls are accelerations, i.e. they smoothly change the state.
         TODO scaled to [-1, 1], such that the controller can be agnostic about their range.
-        Discrete controls are values to which the state is set immediately (not smoothly).
         Returns observations including body and ball positions TODO as well as reward.
         """
         self.current_step += 1
 
         # update discrete body state
-        self.hold_l, self.hold_r = controls[:2] > 0 # TODO for continuous hold controls: 0 or negative means open, positive closed
-        cont_controls = controls[2:]
+        self.hold_l, self.hold_r = action[:2] > 0 # TODO make it sigmoid
+        cont_controls = action[2:]
 
         # update continuous body state (elbow angle / angular velocity)
         self.d_elbow_l += cont_controls[0] * Juggler.DT
@@ -139,14 +162,16 @@ class Juggler(gym.Env):
         # get_reward
         reward = self._get_reward()
 
-        # rendering
-        if self.rendering:
-            self._draw()
-
         # observations
         obs = self._get_observations()
-        return obs, reward, terminate
+        return obs, reward, terminate, False, {"catches": self.catches, "beats": self.beats}
 
+    def close(self):
+        if self.render_mode == "human":
+            import pygame
+            pygame.display.quit()
+            pygame.quit()
+            self.isopen = False
 
     def _get_observations(self):
         """
@@ -156,7 +181,6 @@ class Juggler(gym.Env):
         obs = [self.hold_l, self.hold_r, self.elbow_l, self.elbow_r, self.d_elbow_l, self.d_elbow_r]
         for ball in self.balls:
             obs += [ball["pos"][0], ball["pos"][1], ball["vel"][0], ball["vel"][1]]
-        obs += [self.beat, self.catches]
         return obs
 
 
@@ -372,13 +396,8 @@ class Juggler(gym.Env):
         
     
     def render(self, filename=None, show=False):
-        self.ani = animation.ArtistAnimation(self.fig, self.frames, interval=Juggler.DT*1000, blit=True)
-        writergif = animation.PillowWriter(fps=30) 
-        if filename is not None:
-            self.ani.save(f"{filename}.gif", writer=writergif)
-        if show:
-            plt.show()
-
+        if self.render_mode is not None:
+            return 
 
 class OptimalAgent():
     """
@@ -415,11 +434,12 @@ class OptimalAgent():
         self.beat = 0 # TODO
 
 
-    def act(self, observations):
+    def act(self, observations, info):
+        # print(observations)
         elbow_l, elbow_r, d_elbow_l, d_elbow_r = observations[2:6]
 
         # current beat
-        self.beat = observations[-2]
+        self.beat = info["beats"]
         throw_hand = self.beat % 2
 
         # current throw
@@ -477,12 +497,12 @@ if __name__ == "__main__":
     terminate = False
     rewards = []
     step = 0
-    obs = env.reset(rendering=True)
+    obs, info = env.reset()
     while not terminate and step < N_STEP:
-        ctrl = agent.act(obs)
-        obs, reward, terminate = env.step(ctrl)
+        ctrl = agent.act(obs, info)
+        obs, reward, terminate, _, info = env.step(ctrl)
         rewards += [reward]
         #print(reward)
         step += 1
 
-    env.render("./render/test_" + str(PATTERN) + "_optimal")
+    # env.render("./render/test_" + str(PATTERN) + "_optimal")

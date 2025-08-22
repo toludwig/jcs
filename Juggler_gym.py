@@ -2,12 +2,6 @@ import numpy as np
 import pygame
 import gymnasium as gym
 from gymnasium import spaces
-from gymnasium.envs.registration import register
-
-register(
-    id='Juggler-v0',
-    entry_point='Juggler_gym:Juggler',
-)
 
 
 class Juggler(gym.Env):
@@ -26,6 +20,7 @@ class Juggler(gym.Env):
     APEX_HEIGHT = lambda height: 100 * np.exp(height)
     APEX_TOLERANCE = 0.5 # radius of area aronud apex where throw should pass through
 
+    metadata = {'render_modes': ['rgb_array', 'human']}
 
     def __init__(self, pattern, verbose=True, render_mode="rgb_array"):
         """
@@ -33,7 +28,7 @@ class Juggler(gym.Env):
         e.g. it is crucial for the reward function (for checking if the right ball is caught),
         therefore it's shared between environment and agent.
         """
-        # set pattern / task
+        # set pattern / task 
         self.pattern = pattern
         self.period = len(self.pattern)
         self.n_balls = sum(self.pattern) // self.period # TODO error if not divisible
@@ -44,9 +39,9 @@ class Juggler(gym.Env):
         self.beats = 0
         self.catches = 0
         
-        self.action_space = spaces.Box(low=-1, high=1, shape=(self.action_dim,), dtype=np.float32)
-        self.observation_space = spaces.Box(low=np.array([-1, -1, 0, 0, -10, -10] + self.n_balls * [0, 0, -100, -100]),
-                                            high=np.array([1, 1, 2*np.pi, 2*np.pi, 10, 10] + self.n_balls * [400, 600, 100, 100]),
+        self.action_space = spaces.Box(low=np.array([-5,-5,-30,-30]), high=np.array([5,5,30,30]), shape=(self.action_dim,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=np.array([0, 0, 0, 0, -10, -10] + self.n_balls * [0, 0, -100, -100]),
+                                            high=np.array([1, 1, 2*np.pi, 2*np.pi, 10, 10] + self.n_balls * [400, 600, 100, 100], dtype=np.float32),
                                             shape=(self.state_dim,), dtype=np.float32)
 
         self.verbose = verbose
@@ -97,7 +92,8 @@ class Juggler(gym.Env):
         Returns observations including body and ball positions TODO as well as reward.
         """
         # update discrete body state
-        self.hold_l, self.hold_r = action[:2] > 0 # TODO make it sigmoid
+        HOLD_BIAS = 0.5
+        self.hold_l, self.hold_r = action[:2] > HOLD_BIAS
         cont_controls = action[2:]
 
         # increment beat if elbow crosses pi (only after first throw)
@@ -144,12 +140,15 @@ class Juggler(gym.Env):
         obs = [self.hold_l, self.hold_r, self.elbow_l, self.elbow_r, self.d_elbow_l, self.d_elbow_r]
         for ball in self.balls:
             obs += [ball["pos"][0], ball["pos"][1], ball["vel"][0], ball["vel"][1]]
-        return obs
+        return np.array(obs, dtype=np.float32)
 
 
     def _get_reward(self):
         # reward for turning in the right direction
-        turning_reward = ((self.d_elbow_l > 0) + (self.d_elbow_r > 0)) * 0.01 # TODO
+        # turning_reward = ((self.d_elbow_l > 0 and self.hold_l) + (self.d_elbow_r > 0 and self.hold_r)) * 0.01 # TODO
+        # reward for holding the hands closed on the outside
+        #holding_reward = (int(self.elbow_l > np.pi / 2 and self.elbow_l < 3*np.pi / 2 and not self.hold_l) +\
+        #                  int(self.elbow_r > np.pi / 2 and self.elbow_r < 3*np.pi / 2 and not self.hold_r)) * (-100)
         # reward for flight
         dist = 0
         for ball in self.balls:
@@ -166,7 +165,7 @@ class Juggler(gym.Env):
                     d = np.linalg.norm(ball["pos"] - target_hand_pos)
                 dist += d
         fly_reward = 1/dist if dist != 0 else 0
-        return turning_reward + fly_reward
+        return fly_reward # + turning_reward + holding_reward 
 
 
     def _update_joints(self):
@@ -294,7 +293,7 @@ class Juggler(gym.Env):
 
     def _check_drop(self):
         for ball in self.balls:
-            if ball["pos"][1] < 0:
+            if ball["pos"][1] < 50:
                 if self.verbose:
                     print("drop", ball["id"])
                 return True
@@ -315,7 +314,7 @@ class Juggler(gym.Env):
         return False
 
     
-    def render(self, filename=None, show=False):
+    def render(self):
         if self.render_mode is None:
             return
 
@@ -357,7 +356,7 @@ class Juggler(gym.Env):
                 height = ball["height"]
                 target = ball["target"]
                 target_elbow_pos = np.array([self.elbow_l_pos, self.elbow_r_pos][target])
-                midpoint = np.mean(self.SHOULDER_L_POS[0], self.SHOULDER_R_POS[0])
+                midpoint = np.mean([self.SHOULDER_L_POS[0], self.SHOULDER_R_POS[0]])
                 apex = [midpoint if height % 2 == 1 else target_elbow_pos[0], Juggler.APEX_HEIGHT(height)]
                 pygame.draw.circle(self.surf, color=ball["color"], center=to_pygame_coords(apex), radius=5)
 
@@ -365,6 +364,8 @@ class Juggler(gym.Env):
         pygame.display.flip()
         self.clock.tick(20)  # Limit to 30 FPS
 
+        if self.render_mode == "rgb_array":
+            return np.array(pygame.surfarray.array3d(self.surf))
 
 
 class OptimalAgent():
@@ -459,6 +460,28 @@ class OptimalAgent():
         if dist > np.pi:
             dist = 2*np.pi - dist
         return dist
+
+
+class AngleJuggler(Juggler):
+    MAX_ACC = 20
+
+    def __init__(self, pattern, verbose=True, render_mode="rgb_array"):
+        super().__init__(pattern, verbose, render_mode)
+        self.action_dim = 2 # only two accelerations (opening of hands hardcoded)
+        self.action_space = spaces.Box(low=np.array([-AngleJuggler.MAX_ACC]*2), high=np.array([AngleJuggler.MAX_ACC]*2), shape=(self.action_dim,), dtype=np.float32)
+        
+    def step(self, action):
+        dd_elbow_l, dd_elbow_r = action
+        height = self.pattern[self.beat % len(self.pattern)]
+        theta = OptimalAgent.height2theta[height]
+        dist_l = OptimalAgent._radial_dist(theta, self.elbow_l)
+        hold_l = dist_l > abs(self.d_elbow_l + dd_elbow_l * self.DT) * self.DT * 4
+        dist_r = OptimalAgent._radial_dist(theta, self.elbow_r)
+        hold_r = dist_r > abs(self.d_elbow_r + dd_elbow_r * self.DT) * self.DT * 4
+
+        # 4 actions
+        action = np.array([hold_l, hold_r, action[0], action[1]])
+        return super().step(action)
 
 
 if __name__ == "__main__":

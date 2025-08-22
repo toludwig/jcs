@@ -6,7 +6,12 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecVideoRecorder
 import wandb
 from wandb.integration.sb3 import WandbCallback
-from Juggler_gym import Juggler
+from gymnasium.envs.registration import register
+
+register(
+    id='AngleJuggler-v0',
+    entry_point='Juggler_gym:AngleJuggler',
+)
 
 
 class CustomWandbCallback(WandbCallback):
@@ -63,7 +68,7 @@ if __name__ == "__main__":
     config = {
         "policy_type": "MlpPolicy",
         "total_timesteps": 3*25000,
-        "env_name": "Juggler-v0",
+        "env_name": "AngleJuggler-v0",
     }
     run = wandb.init(
         entity="tobiludw-university-t-bingen",
@@ -77,7 +82,7 @@ if __name__ == "__main__":
 
 
     def make_env():
-        env = gym.make(config["env_name"], pattern= [3,0,0], render_mode="rgb_array")
+        env = gym.make(config["env_name"], pattern=[3,0,0], verbose=True, render_mode="rgb_array")
         env = Monitor(env)  # record stats such as returns
         return env
 
@@ -92,7 +97,13 @@ if __name__ == "__main__":
         video_length=200,
     )
 
-    model = PPO(config["policy_type"], env, verbose=1, tensorboard_log=f"runs/{run.id}")
+    hyper = {
+        'n_steps': 200,
+        'learning_rate': 0.1,
+        'ent_coef': 0.1
+    }
+
+    model = PPO(config["policy_type"], env, **hyper, verbose=1, tensorboard_log=f"runs/{run.id}")
 
     model.learn(
         total_timesteps=config["total_timesteps"],

@@ -80,13 +80,19 @@ if __name__ == "__main__":
 
 
     def make_env():
-        env = gym.make(config["env_name"], pattern= [3,0,0])
+        env = gym.make(config["env_name"], pattern= [3,0,0], render_mode="rgb_array")
         env = Monitor(env)  # record stats such as returns
         return env
 
 
     env = DummyVecEnv([make_env])
 
+    VecVideoRecorder(
+        env,
+        f"videos/{run.id}",
+        record_video_trigger=lambda x: x % 2000 == 0,
+        video_length=200,
+    )
 
     model = PPO(config["policy_type"], env, verbose=1, tensorboard_log=f"runs/{run.id}")
 
@@ -98,6 +104,6 @@ if __name__ == "__main__":
             verbose=2,
         ),
     )
-    # for video in os.listdir(f"videos/{run.id}"):
-    #     run.log({"video": wandb.Video(f"videos/{run.id}/{video}")})
+    for video in os.listdir(f"videos/{run.id}"):
+        run.log({"video": wandb.Video(f"videos/{run.id}/{video}")})
     run.finish()

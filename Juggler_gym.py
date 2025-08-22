@@ -83,7 +83,7 @@ class Juggler(gym.Env):
         self.balls = []
         self._init_balls() # TODO can we change pattern of juggler after __init__?
 
-        if self.render_mode == "human":
+        if self.render_mode == "rgb_array":
             self.render()
         return self._get_observations(), {"catches": self.catches, "beats": self.beats}
 
@@ -157,7 +157,7 @@ class Juggler(gym.Env):
 
 
     def close(self):
-        if self.render_mode == "human":
+        if self.render_mode == "rgb_array":
             pygame.display.quit()
             pygame.quit()
             self.isopen = False

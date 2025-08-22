@@ -1,11 +1,9 @@
 import gymnasium as gym
-import os
 import numpy as np
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecVideoRecorder
-from stable_baselines3.common.callbacks import BaseCallback
 import wandb
 from wandb.integration.sb3 import WandbCallback
 from Juggler_gym import Juggler
@@ -49,7 +47,6 @@ class CustomWandbCallback(WandbCallback):
                 "std_episode_reward": np.std(self.episode_rewards),
                 "min_episode_reward": np.min(self.episode_rewards),
                 "max_episode_reward": np.max(self.episode_rewards),
-                "mean_episode_length": np.mean(self.episode_lengths),
                 "episode_count": len(self.episode_rewards)
             })
             
@@ -86,6 +83,7 @@ if __name__ == "__main__":
 
 
     env = DummyVecEnv([make_env])
+    env = VecVideoRecorder(env, f"./render/ppo", record_video_trigger=lambda x: x % 20 == 0, video_length=1000)
 
     VecVideoRecorder(
         env,

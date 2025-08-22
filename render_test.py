@@ -5,8 +5,8 @@ from Juggler_gym import Juggler, OptimalAgent
 pygame.init()
 pygame.display.init()
 
-# Create your environment with render_mode="human"
-env = Juggler(pattern=[3, 3, 3], render_mode="human")
+# Create your environment with render_mode="rgb_array"
+env = Juggler(pattern=[3, 3, 3], render_mode="rgb_array")
 agent = OptimalAgent(pattern=[3, 3, 3])
 
 # Reset the environment to initialize everything

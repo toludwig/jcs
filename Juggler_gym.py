@@ -2,6 +2,7 @@ import numpy as np
 import pygame
 import gymnasium as gym
 from gymnasium import spaces
+import wandb
 
 
 class Juggler(gym.Env):
@@ -13,7 +14,7 @@ class Juggler(gym.Env):
     SHOULDER_R_POS = np.array([250, 250])
     UPPERARM_LENGTH = 90
     LOWERARM_LENGTH = 30
-    CATCH_TOLERANCE = 10
+    CATCH_TOLERANCE = 20
     BALL_RADIUS = 10 # for collision detection
 
     # height of highest point of the parabola that the ball should pass through
@@ -36,14 +37,16 @@ class Juggler(gym.Env):
         self.state_dim = 6 + 4 * self.n_balls # (hold + elbow angle + elbow velocity) * 2 sides + (2 coordinates + 2 velocities) * number_of_balls
         self.action_dim = 4
         
-        self.beats = 0
-        self.catches = 0
-        
         self.action_space = spaces.Box(low=np.array([-5,-5,-30,-30]), high=np.array([5,5,30,30]), shape=(self.action_dim,), dtype=np.float32)
         self.observation_space = spaces.Box(low=np.array([0, 0, 0, 0, -10, -10] + self.n_balls * [0, 0, -100, -100]),
                                             high=np.array([1, 1, 2*np.pi, 2*np.pi, 10, 10] + self.n_balls * [400, 600, 100, 100], dtype=np.float32),
                                             shape=(self.state_dim,), dtype=np.float32)
 
+        # TODO remove? these are set in reset
+        # self.beats = 0
+        # self.catches = 0
+        # self.balls = []
+        
         self.verbose = verbose
         self.render_mode = render_mode
         self.screen = pygame.display.set_mode((400, 600))
@@ -96,14 +99,6 @@ class Juggler(gym.Env):
         self.hold_l, self.hold_r = action[:2] > HOLD_BIAS
         cont_controls = action[2:]
 
-        # increment beat if elbow crosses pi (only after first throw)
-        # if self.throws > 0 and self.elbow_l < np.pi and self.elbow_l + self.d_elbow_l * Juggler.DT > np.pi:
-        #     self.beat += 1
-        #     print("beat", self.beat)
-        # if self.throws > 0 and self.elbow_r < np.pi and self.elbow_r + self.d_elbow_r * Juggler.DT > np.pi:
-        #     self.beat += 1
-        #     print("beat", self.beat)
-
         # update continuous body state (elbow angle / angular velocity)
         self.d_elbow_l += cont_controls[0] * Juggler.DT
         self.d_elbow_r += cont_controls[1] * Juggler.DT
@@ -122,7 +117,7 @@ class Juggler(gym.Env):
         # get_reward
         reward = self._get_reward()
         obs = self._get_observations()
-        info = {"catches": self.catches, "throws": self.throws, "beats": self.beats, "time": self.time}
+        info = {"catches": self.catches, "throws": self.throws, "beats": self.beats, "time": self.time, "balls": self.balls}
         return obs, reward, terminate, False, info
 
 
@@ -145,7 +140,7 @@ class Juggler(gym.Env):
 
     def _get_reward(self):
         # reward for turning in the right direction
-        # turning_reward = ((self.d_elbow_l > 0 and self.hold_l) + (self.d_elbow_r > 0 and self.hold_r)) * 0.01 # TODO
+        turning_reward = int(self.d_elbow_l >= 0) + int(self.d_elbow_r >= 0)
         # reward for holding the hands closed on the outside
         #holding_reward = (int(self.elbow_l > np.pi / 2 and self.elbow_l < 3*np.pi / 2 and not self.hold_l) +\
         #                  int(self.elbow_r > np.pi / 2 and self.elbow_r < 3*np.pi / 2 and not self.hold_r)) * (-100)
@@ -153,19 +148,17 @@ class Juggler(gym.Env):
         dist = 0
         for ball in self.balls:
             if ball["dwell"] == -1: # if ball flying
-                height = ball["height"]
                 target = ball["target"]
-                target_hand_pos = np.array([self.hand_l_pos, self.hand_r_pos][target])
-                target_elbow_pos = np.array([self.elbow_l_pos, self.elbow_r_pos][target])
-                apex = [1 if height % 2 == 1 else target_elbow_pos[0], Juggler.APEX_HEIGHT(height)]
+                apex = ball["apex"]
                 before = ball["pos"][0] < apex[0] if target == 1 else ball["pos"][0] > apex[0]
-                if before: # if ball "before" apex: dist = distance(ball, apex) + distance(apex, elbow)
-                    d = np.linalg.norm(ball["pos"] - apex) + np.linalg.norm(apex - target_elbow_pos)
+                if before: # if ball "before" apex: dist = distance(ball, apex)
+                    d = np.linalg.norm(ball["pos"] - apex)
                 else: # if ball "behind" apex: dist = distance(ball, hand)
+                    target_hand_pos = np.array([self.hand_l_pos, self.hand_r_pos][target])
                     d = np.linalg.norm(ball["pos"] - target_hand_pos)
                 dist += d
         fly_reward = 1/dist if dist != 0 else 0
-        return fly_reward # + turning_reward + holding_reward 
+        return 0*fly_reward + 0.01*turning_reward # + holding_reward 
 
 
     def _update_joints(self):
@@ -190,6 +183,7 @@ class Juggler(gym.Env):
         All balls are placed in the two hands according to the pattern.
         Zero-throws do not require a ball.
         """
+        self.balls = []
         n_placed = 0
         for beat, height in enumerate(self.pattern):
             if height == 0 or n_placed == self.n_balls: # only n_balls and no zero-throws
@@ -219,14 +213,13 @@ class Juggler(gym.Env):
         ball["height"] = self.pattern[self.beat % self.period]
         ball["beat"] += ball["height"]
         self.beat += 1
-
-        if ball["height"] == 0: # TODO where to handle zeros, they don't belong to a ball but beat has to be counted
-            return # zeros are not thrown
         
         self.throws += 1 # only for non-zero throws
 
         ball["origin"] = ball["dwell"]
         ball["target"] = ball["origin"] if ball["height"] % 2 == 0 else 1-ball["origin"]
+        target_elbow_pos = np.array([self.elbow_l_pos, self.elbow_r_pos][ball["target"]])
+        ball["apex"] = [1 if ball["height"] % 2 == 1 else target_elbow_pos[0], Juggler.APEX_HEIGHT(ball["height"])]
         ball["dwell"] = -1 # in air
         if self.verbose:
             print("throw ball", ball["id"], "at height", ball["height"], "from hand", ball["origin"])
@@ -254,7 +247,9 @@ class Juggler(gym.Env):
         dist = np.linalg.norm(ball["pos"] - target_pos)
         if dist > Juggler.CATCH_TOLERANCE:
             return
-        if self.beat >= ball["beat"] - 1: # ball should be caught 1 beat before next throw
+        print("in catch tolerance")
+        # ball should only be caught 1 beat before next throw
+        if self.beat == ball["beat"] - 1:
             ball["dwell"] = target
             self.catches += 1
             if self.verbose:
@@ -277,6 +272,10 @@ class Juggler(gym.Env):
                 ball["pos"] = self.hand_r_pos
                 ball["vel"] = self.hand_r_vel
 
+            # waiting in case of zero-throws
+            if self.pattern[self.beat % self.period] == 0:
+                self.beat += 1
+
             # throwing
             # theoretically allows multiplex but TODO in notation
             if ball["dwell"] >= 0 and ball["beat"] == self.beat:
@@ -292,8 +291,11 @@ class Juggler(gym.Env):
 
 
     def _check_drop(self):
+        """
+        Drop means that the ball falls out of the window (also to the sides).
+        """
         for ball in self.balls:
-            if ball["pos"][1] < 50:
+            if ball["pos"][1] < 50 or ball["pos"][0] < 0 or ball["pos"][0] > 400:
                 if self.verbose:
                     print("drop", ball["id"])
                 return True
@@ -366,6 +368,7 @@ class Juggler(gym.Env):
 
         if self.render_mode == "rgb_array":
             return np.array(pygame.surfarray.array3d(self.surf))
+
 
 
 class OptimalAgent():
@@ -463,6 +466,10 @@ class OptimalAgent():
 
 
 class AngleJuggler(Juggler):
+    """
+    A simplified version of the juggler that automatically throws at the right angle.
+    Thus, it has only two degrees of freedom, which are the accelerations of the elbows.
+    """
     MAX_ACC = 20
 
     def __init__(self, pattern, verbose=True, render_mode="rgb_array"):

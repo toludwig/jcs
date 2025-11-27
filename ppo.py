@@ -82,7 +82,7 @@ if __name__ == "__main__":
 
 
     def make_env():
-        env = gym.make(config["env_name"], pattern=[3,0,0], verbose=True, render_mode="rgb_array")
+        env = gym.make(config["env_name"], pattern=[3,3,0], verbose=True, render_mode="rgb_array")
         env = Monitor(env)  # record stats such as returns
         return env
 
@@ -100,7 +100,9 @@ if __name__ == "__main__":
     hyper = {
         'n_steps': 200,
         'learning_rate': 0.1,
-        'ent_coef': 0.1
+        'gae_lambda': 0.95, # TODO
+        'ent_coef': 0.1,
+        'use_sde': True # False
     }
 
     model = PPO(config["policy_type"], env, **hyper, verbose=1, tensorboard_log=f"runs/{run.id}")

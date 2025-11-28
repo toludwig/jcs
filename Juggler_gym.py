@@ -3,6 +3,8 @@ import pygame
 import gymnasium as gym
 from gymnasium import spaces
 import wandb
+import matplotlib.pyplot as plt
+import imageio
 
 
 class Juggler(gym.Env):
@@ -16,6 +18,7 @@ class Juggler(gym.Env):
     LOWERARM_LENGTH = 30
     CATCH_TOLERANCE = 20
     BALL_RADIUS = 10 # for collision detection
+    APEX_TOLERANCE = 3*BALL_RADIUS
 
     # height of highest point of the parabola that the ball should pass through
     APEX_HEIGHT = lambda height: 100 * np.exp(height)
@@ -46,7 +49,6 @@ class Juggler(gym.Env):
         # self.beats = 0
         # self.catches = 0
         # self.balls = []
-        
         self.verbose = verbose
         self.render_mode = render_mode
         self.screen = pygame.display.set_mode((400, 600))
@@ -81,10 +83,10 @@ class Juggler(gym.Env):
         self.catches = 0 # catch counter
         self.balls = []
         self._init_balls() # TODO can we change pattern of juggler after __init__?
-
+        self.event_reward = 0
         if self.render_mode == "rgb_array":
             self.render()
-        return self._get_observations(), {"catches": self.catches, "beats": self.beats}
+        return self._get_observations(), {"catches": self.catches, "beat": self.beat}
 
 
     def step(self, action):
@@ -115,9 +117,9 @@ class Juggler(gym.Env):
         self.time += Juggler.DT
 
         # get_reward
-        reward = self._get_reward()
+        reward = self._get_reward_discrete()
         obs = self._get_observations()
-        info = {"catches": self.catches, "throws": self.throws, "beats": self.beats, "time": self.time, "balls": self.balls}
+        info = {"catches": self.catches, "throws": self.throws, "beat": self.beat, "time": self.time, "balls": self.balls}
         return obs, reward, terminate, False, info
 
 
@@ -160,6 +162,10 @@ class Juggler(gym.Env):
         fly_reward = 1/dist if dist != 0 else 0
         return 0*fly_reward + 0.01*turning_reward # + holding_reward 
 
+    def _get_reward_discrete(self):
+        reward = self.event_reward
+        self.event_reward = 0
+        return reward
 
     def _update_joints(self):
         # TODO fix shoulders?
@@ -199,6 +205,7 @@ class Juggler(gym.Env):
                 "origin": origin, # hand in which the ball starts
                 "height": height,
                 "target": origin if height % 2 == 0 else 1-origin,
+
                 "color": [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255)][n_placed % 5]
             }
             n_placed += 1
@@ -219,7 +226,8 @@ class Juggler(gym.Env):
         ball["origin"] = ball["dwell"]
         ball["target"] = ball["origin"] if ball["height"] % 2 == 0 else 1-ball["origin"]
         target_elbow_pos = np.array([self.elbow_l_pos, self.elbow_r_pos][ball["target"]])
-        ball["apex"] = [1 if ball["height"] % 2 == 1 else target_elbow_pos[0], Juggler.APEX_HEIGHT(ball["height"])]
+        ball["apex"] = np[1 if ball["height"] % 2 == 1 else target_elbow_pos[0], Juggler.APEX_HEIGHT(ball["height"])]
+        ball["apex_reached"] = False
         ball["dwell"] = -1 # in air
         if self.verbose:
             print("throw ball", ball["id"], "at height", ball["height"], "from hand", ball["origin"])
@@ -230,6 +238,11 @@ class Juggler(gym.Env):
         # Euler integration for position and velocity
         ball["vel"] += np.array([0, Juggler.GRAVITY]) * Juggler.DT
         ball["pos"] += ball["vel"] * Juggler.DT
+        
+        # if ball enters the apex region, give intermediary reward
+        if np.linalg.norm(ball["pos"] - ball["apex"]) < Juggler.APEX_TOLERANCE and not ball["apex_reached"]:
+            self.event_reward += 1
+            ball["apex_reached"] = True
 
 
     def _try_catch_ball(self, ball):
@@ -251,6 +264,9 @@ class Juggler(gym.Env):
         # ball should only be caught 1 beat before next throw
         if self.beat == ball["beat"] - 1:
             ball["dwell"] = target
+            if ball["apex_reached"]:
+                self.event_reward += 2
+                ball["apex_reached"] = False
             self.catches += 1
             if self.verbose:
                 print("catch ball", ball["id"], "in hand", ball["target"])
@@ -411,7 +427,7 @@ class OptimalAgent():
         #print(d_elbow_l)
 
         # current beat
-        self.beat = info["beats"]
+        self.beat = info["beat"]
         throw_hand = self.beat % 2
 
         # current throw
@@ -500,12 +516,31 @@ if __name__ == "__main__":
 
     terminate = False
     rewards = []
+    outputs = []
+    distances = []
     step = 0
     obs, info = env.reset()
     while not terminate and step < N_STEP:
         ctrl = agent.act(obs, info)
         obs, reward, terminate, _, info = env.step(ctrl)
+        for ball in env.balls:
+            if "apex" in ball:
+                distances += [np.linalg.norm(ball["pos"] - ball["apex"])]
         rewards += [reward]
-        #print(reward)
-        env.render()
+        output = env.render()
+        outputs += [output]
         step += 1
+
+    # Save the list of outputs as a GIF
+    gif_path = "render/test_2.gif"
+    # outputs should be a list of RGB arrays (HxWx3)
+    imageio.mimsave(gif_path, outputs, fps=20)
+    print(f"Saved simulation as {gif_path}")
+
+    for ball in env.balls:
+      print(ball["apex"])
+
+    plt.figure()
+    # plt.plot(rewards)
+    plt.plot(distances)
+    plt.show()

@@ -18,11 +18,10 @@ class Juggler(gym.Env):
     LOWERARM_LENGTH = 30
     CATCH_TOLERANCE = 20
     BALL_RADIUS = 10 # for collision detection
-    APEX_TOLERANCE = 3*BALL_RADIUS
+    APEX_TOLERANCE = 5*BALL_RADIUS
 
     # height of highest point of the parabola that the ball should pass through
-    APEX_HEIGHT = lambda height: 100 * np.exp(height)
-    APEX_TOLERANCE = 0.5 # radius of area aronud apex where throw should pass through
+    APEX_HEIGHT = lambda height: 10 * np.exp(height)
 
     metadata = {'render_modes': ['rgb_array', 'human']}
 
@@ -226,7 +225,8 @@ class Juggler(gym.Env):
         ball["origin"] = ball["dwell"]
         ball["target"] = ball["origin"] if ball["height"] % 2 == 0 else 1-ball["origin"]
         target_elbow_pos = np.array([self.elbow_l_pos, self.elbow_r_pos][ball["target"]])
-        ball["apex"] = np[1 if ball["height"] % 2 == 1 else target_elbow_pos[0], Juggler.APEX_HEIGHT(ball["height"])]
+        midpoint = np.mean([self.SHOULDER_L_POS[0], self.SHOULDER_R_POS[0]])
+        ball["apex"] = np.array([midpoint if ball["height"] % 2 == 1 else target_elbow_pos[0], Juggler.APEX_HEIGHT(ball["height"])])
         ball["apex_reached"] = False
         ball["dwell"] = -1 # in air
         if self.verbose:
@@ -541,6 +541,7 @@ if __name__ == "__main__":
       print(ball["apex"])
 
     plt.figure()
-    # plt.plot(rewards)
+    plt.plot(rewards)
+    plt.axhline(y= env.APEX_TOLERANCE, color="r")
     plt.plot(distances)
     plt.show()

@@ -1,0 +1,143 @@
+
+<mujoco model="Humanoid-ArmsOnly-Juggler">
+  <option timestep="0.005" gravity="0 0 -9.81"/>
+
+  <visual>
+    <map force="0.1" zfar="30"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global offwidth="2560" offheight="1440" elevation="-20" azimuth="120"/>
+  </visual>
+
+  <statistic center="0 0 1"/>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1=".3 .5 .7" rgb2="0 0 0" width="32" height="512"/>
+    <texture name="body" type="cube" builtin="flat" mark="cross" width="128" height="128" rgb1="0.8 0.6 0.4" rgb2="0.8 0.6 0.4" markrgb="1 1 1"/>
+    <material name="body" texture="body" texuniform="true" rgba="0.8 0.6 .4 1"/>
+
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+
+    <texture name="ball_tex" type="cube" builtin="flat" width="64" height="64" rgb1=".9 .2 .2" rgb2=".9 .2 .2"/>
+    <material name="ball_mat" texture="ball_tex" texuniform="true" rgba=".9 .2 .2 1"/>
+  </asset>
+
+  <default>
+    <!-- motor defaults -->
+    <motor ctrlrange="-1 1" ctrllimited="true"/>
+
+    <!-- body defaults -->
+    <default class="body">
+      <geom type="capsule" condim="1" friction=".7 .005 .0001" solimp=".9 .99 .003" solref=".015 1" material="body" group="1"/>
+      <default class="arm_upper"><geom size=".04"/></default>
+      <default class="arm_lower"><geom size=".031"/></default>
+      <default class="hand"><geom type="sphere" size=".04"/></default>
+
+      <!-- joints -->
+      <joint type="hinge" damping=".2" stiffness="1" armature=".01" limited="true" solimplimit="0 .99 .01"/>
+
+      <default class="shoulder"><joint range="-85 60"/></default>
+      <default class="elbow"><joint range="-100 50" stiffness="0"/></default>
+      <default class="wrist"><joint range="-90 90" stiffness="0.5"/></default>
+    </default>
+  </default>
+
+  <worldbody>
+    <geom name="floor" size="0 0 .05" type="plane" material="grid" condim="3"/>
+    <light name="top" pos="0 0 3" mode="trackcom"/>
+
+    <!-- Torso root - completely fixed (no joints = fixed body) -->
+    <body name="torso" pos="0 0 1.1" childclass="body">
+      <!-- No joints = fixed body that cannot move or rotate -->
+      <geom name="torso" fromto="0 -.07 0 0 .07 0" size=".07"/>
+
+      <!-- Right Arm -->
+      <body name="upper_arm_right" pos="0 -.17 .06">
+        <joint name="shoulder1_right" axis="2 1 1" class="shoulder"/>
+        <joint name="shoulder2_right" axis="0 -1 1" class="shoulder"/>
+        <geom  name="upper_arm_right" fromto="0 0 0 .16 -.16 -.16" class="arm_upper"/>
+
+        <body name="lower_arm_right" pos=".18 -.18 -.18">
+          <joint name="elbow_right" axis="0 -1 1" class="elbow"/>
+          <geom  name="lower_arm_right" fromto=".01 .01 .01 .17 .17 .17" class="arm_lower"/>
+
+          <body name="hand_right" pos=".18 .18 .18">
+            <joint name="wrist_right" axis="1 0 0" class="wrist"/>
+            <geom  name="hand_right" zaxis="1 1 1" class="hand"/>
+            <!-- Palm site slightly forward of hand sphere center -->
+            <site name="palm_right"
+                  type="box"
+                  pos="0 0 0"
+                  size="0.04 0.04 0.04"
+                  rgba=".2 .8 .2 .3"/>          
+            </body>
+        </body>
+      </body>
+
+      <!-- Left Arm -->
+      <body name="upper_arm_left" pos="0 .17 .06">
+        <joint name="shoulder1_left" axis="-2 1 -1" class="shoulder"/>
+        <joint name="shoulder2_left" axis="0 -1 -1"  class="shoulder"/>
+        <geom  name="upper_arm_left" fromto="0 0 0 .16 .16 -.16" class="arm_upper"/>
+
+        <body name="lower_arm_left" pos=".18 .18 -.18">
+          <joint name="elbow_left" axis="0 -1 -1" class="elbow"/>
+          <geom  name="lower_arm_left" fromto=".01 -.01 .01 .17 -.17 .17" class="arm_lower"/>
+
+          <body name="hand_left" pos=".18 -.18 .18">
+            <joint name="wrist_left" axis="1 0 0" class="wrist"/>
+            <geom  name="hand_left" zaxis="1 -1 1" class="hand"/>
+            <site name="palm_left"
+                  type="box"
+                  pos="0 0 0"
+                  size="0.04 0.04 0.04"
+                  rgba=".2 .8 .2 .3"/>          
+          </body>
+        </body>
+      </body>
+    </body>
+
+    <!-- Ball (free-floating) - positioned at right hand palm initially -->
+    <body name="ball1" pos="0.39 -0.17 1.16">
+      <freejoint/>
+      <geom name="ball1_geom" type="sphere" size="0.05" material="ball_mat"
+            density="1200" friction="1.2 .01 .0001" solimp=".95 .99 .001" solref=".01 1"/>
+      <site name="ball1_site" pos="0 0 0" size="0.01" rgba=".8 .2 .2 1"/>
+    </body>
+  </worldbody>
+
+  <!-- weld constraints used for "catching": start with ball1 attached to right hand -->
+  <equality>
+    <!-- Right hand catch constraint - start active with ball1 attached -->
+    <weld name="catch_right_ball1" active="true" body1="hand_right" body2="ball1" solimp=".95 .99 .001" solref=".01 1"/>
+
+    <!-- Left hand catch constraint -->
+    <weld name="catch_left_ball1"  active="false" body1="hand_left"  body2="ball1" solimp=".95 .99 .001" solref=".01 1"/>
+  </equality>
+
+  <!-- Arm/hand actuators and catch/release controls -->
+  <actuator>
+    <!-- Right arm -->
+    <motor name="shoulder1_right" gear="20"  joint="shoulder1_right"/>
+    <motor name="shoulder2_right" gear="20"  joint="shoulder2_right"/>
+    <motor name="elbow_right"     gear="40"  joint="elbow_right"/>
+    <motor name="wrist_right"     gear="10"  joint="wrist_right"/>
+
+    <!-- Left arm -->
+    <motor name="shoulder1_left"  gear="20"  joint="shoulder1_left"/>
+    <motor name="shoulder2_left"  gear="20"  joint="shoulder2_left"/>
+    <motor name="elbow_left"      gear="40"  joint="elbow_left"/>
+    <motor name="wrist_left"      gear="10"  joint="wrist_left"/>
+
+  </actuator>
+
+  <!-- Touch sensors for catch detection -->
+  <sensor>
+  <!-- Right hand vs ball -->
+  <contact name="touch_right_ball1" geom1="hand_right" geom2="ball1_geom"/>
+
+  <!-- Left hand vs ball -->
+  <contact name="touch_left_ball1"  geom1="hand_left"  geom2="ball1_geom"/>
+</sensor>
+
+</mujoco>
